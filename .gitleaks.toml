@@ -1,0 +1,43 @@
+title = "sonar gitleaks config"
+
+[[rules]]
+id = "solana-private-key"
+description = "Solana private key (base58)"
+regex = '''[1-9A-HJ-NP-Za-km-z]{88}'''
+tags = ["key", "solana"]
+[rules.allowlist]
+paths = [".env.example", "ROADMAP.md", "SSOT.md", "docs/"]
+
+[[rules]]
+id = "helius-api-key"
+description = "Helius API key"
+regex = '''helius[_-]?api[_-]?key\s*=\s*[a-zA-Z0-9\-]{32,}'''
+tags = ["key", "helius"]
+[rules.allowlist]
+paths = [".env.example"]
+
+[[rules]]
+id = "private-key-hex"
+description = "Hex-encoded private key"
+regex = '''(?i)(private[_-]?key|secret[_-]?key)\s*[=:]\s*0x[0-9a-fA-F]{64}'''
+tags = ["key", "hex"]
+[rules.allowlist]
+paths = [".env.example", "ROADMAP.md", "SSOT.md", "docs/"]
+
+[[rules]]
+id = "generic-api-key"
+description = "Generic API key assignment"
+regex = '''(?i)(api[_-]?key|apikey)\s*[=:]\s*[a-zA-Z0-9\-_]{32,}'''
+tags = ["key", "api"]
+[rules.allowlist]
+paths = [".env.example"]
+
+[allowlist]
+description = "Global allowlist"
+paths = [
+    ".env.example",
+    "ROADMAP.md",
+    "SSOT.md",
+    "docs/",
+    "SECURITY.md",
+]

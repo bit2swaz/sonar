@@ -1,0 +1,58 @@
+# rust build artifacts
+/target
+/program/target
+/program/idl
+/program/out
+/crates/common/target
+/crates/indexer/target
+/crates/coordinator/target
+/crates/prover/target
+/crates/sdk/target
+
+# secrets & env files
+*.env
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.priv
+
+# logs & profiling
+logs/
+*.log
+flamegraph.svg
+perf.data
+perf.data.old
+*.profdata
+*.profraw
+
+# solana-specific
+/sonar-devnet/
+test-ledger/
+*.so
+*.so.deploy
+*.keypair.json
+wallet.json
+
+# anchor
+.anchor/
+program/.anchor/
+node_modules/
+
+# editor & OS
+.DS_Store
+.idea/
+.vscode/settings.json
+*.swp
+*.swo
+*~
+Thumbs.db
+
+# benchmarks / criterion output 
+criterion/
+
+# coverage
+lcov.info
+tarpaulin-report.html
+cobertura.xml

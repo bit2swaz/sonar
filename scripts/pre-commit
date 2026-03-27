@@ -1,0 +1,21 @@
+#!/bin/sh
+# sonar pre-commit hook
+# install via: sh scripts/install-hooks.sh
+
+set -e
+
+echo "Running pre-commit checks..."
+
+# 1. format check
+echo "  → cargo fmt --check"
+cargo fmt --check
+
+# 2. clippy (all warnings are errors)
+echo "  → cargo clippy"
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+# 3. tests (skip integration tests that need a live validator)
+echo "  → cargo test"
+cargo test --workspace --quiet -- --skip integration
+
+echo "Pre-commit checks passed."

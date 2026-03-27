@@ -1,0 +1,39 @@
+[licenses]
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-DFS-2016",
+    "CC0-1.0",
+    "Zlib",
+]
+# Warn on unlicensed packages rather than hard-deny so we can evaluate case by case.
+unlicensed = "warn"
+# Copyleft licenses require legal review before inclusion.
+copyleft = "deny"
+# Allow confidence threshold — some crates lack SPDX identifiers.
+confidence-threshold = 0.8
+
+[bans]
+# Warn on duplicate versions; upgrade workspace to resolve.
+multiple-versions = "warn"
+# Deny packages known to be insecure or abandoned.
+wildcards = "warn"
+highlight = "all"
+
+[advisories]
+# Crates with known CVEs are denied.
+vulnerability = "deny"
+unmaintained = "warn"
+unsound = "warn"
+yanked = "deny"
+notice = "warn"
+
+[sources]
+# Only allow crates from crates.io and our own git sources.
+unknown-registry = "deny"
+unknown-git = "warn"
+allow-git = []

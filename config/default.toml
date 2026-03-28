@@ -1,20 +1,31 @@
+[network]
+rpc_url  = "${SOLANA_RPC_URL}"
+ws_url   = "${SOLANA_WS_URL}"
 chain_id = "mainnet"
 
-[solana]
-rpc_url    = "${SOLANA_RPC_URL}"
-program_id = "${SONAR_PROGRAM_ID}"
-commitment = "confirmed"
+[strategy]
+min_profit_floor_usd  = 0.10
+gas_buffer_multiplier = 1.2
+max_gas_price_gwei    = 2.0
 
-[database]
-url             = "${DATABASE_URL}"
-max_connections = 10
+[rpc]
+helius_api_key = "${HELIUS_API_KEY}"
+helius_rpc_url = "${HELIUS_RPC_URL}"
 
-[redis]
-url = "${REDIS_URL}"
+[indexer]
+geyser_plugin_path = "/opt/sonar/libsonar_indexer.so"
+database_url       = "${DATABASE_URL}"
+concurrency        = 4
+
+[coordinator]
+redis_url                = "${REDIS_URL}"
+callback_timeout_seconds = 30
+max_concurrent_jobs      = 8
 
 [prover]
-proving_key         = "${SP1_PROVING_KEY}"
-max_concurrent_jobs = 4
+sp1_proving_key_path = "${SP1_PROVING_KEY}"
+groth16_params_path  = "${GROTH16_PARAMS}"
+mock_prover          = false
 
 [observability]
 log_level    = "info"

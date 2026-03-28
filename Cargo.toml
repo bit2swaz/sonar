@@ -53,7 +53,7 @@ toml        = "0.8"
 # Logging & metrics
 tracing            = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
-prometheus         = "0.13"
+prometheus-client  = "0.22"
 # Errors
 anyhow    = "1"
 thiserror = "1"

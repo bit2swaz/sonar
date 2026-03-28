@@ -27,10 +27,11 @@ highlight = "all"
 [advisories]
 # Crates with known CVEs are denied.
 vulnerability = "deny"
-unmaintained = "warn"
-unsound = "warn"
+# Scope for unmaintained/unsound/notice: "all" = workspace + transitive deps.
+unmaintained = "all"
+unsound = "all"
 yanked = "deny"
-notice = "warn"
+notice = "all"
 
 [sources]
 # Only allow crates from crates.io and our own git sources.

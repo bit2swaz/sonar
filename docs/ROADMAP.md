@@ -1517,7 +1517,7 @@ Write all files to the highest quality. Ensure the architecture diagram is clear
 ## Mini‑Phase 13.2 — Blog Series and Grant Applications
 
 **Definition of done:**
-- Outline for a 6‑part blog series explaining the development of Sonar.
+- Outline for a blog explaining the development of Sonar.
 - Grant applications to Solana Foundation, EF ESP, etc. are written.
 
 ---

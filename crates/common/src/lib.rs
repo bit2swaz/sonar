@@ -4,3 +4,5 @@ pub mod config;
 pub mod metrics;
 pub mod pnl;
 pub mod types;
+
+pub use types::*;

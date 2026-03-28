@@ -7,13 +7,10 @@ allow = [
     "BSD-3-Clause",
     "ISC",
     "Unicode-DFS-2016",
+    "Unicode-3.0",
     "CC0-1.0",
     "Zlib",
 ]
-# Warn on unlicensed packages rather than hard-deny so we can evaluate case by case.
-unlicensed = "warn"
-# Copyleft licenses require legal review before inclusion.
-copyleft = "deny"
 # Allow confidence threshold — some crates lack SPDX identifiers.
 confidence-threshold = 0.8
 
@@ -25,13 +22,10 @@ wildcards = "warn"
 highlight = "all"
 
 [advisories]
-# Crates with known CVEs are denied.
-vulnerability = "deny"
-# Scope for unmaintained/unsound/notice: "all" = workspace + transitive deps.
-unmaintained = "all"
-unsound = "all"
+# Crates with known CVEs are denied (default in cargo-deny 0.14+).
+# unmaintained/unsound/notice severity keys were removed in 0.14; use ignore list below.
 yanked = "deny"
-notice = "all"
+ignore = []
 
 [sources]
 # Only allow crates from crates.io and our own git sources.

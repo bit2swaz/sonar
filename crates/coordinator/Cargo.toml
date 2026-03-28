@@ -1,0 +1,11 @@
+[package]
+name = "sonar-coordinator"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+sonar-common  = { path = "../common" }
+tokio         = { workspace = true }
+redis         = { workspace = true }
+anyhow        = { workspace = true }
+# solana-client added in Phase 5.1

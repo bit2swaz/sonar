@@ -1,0 +1,21 @@
+chain_id = "mainnet"
+
+[solana]
+rpc_url    = "${SOLANA_RPC_URL}"
+program_id = "${SONAR_PROGRAM_ID}"
+commitment = "confirmed"
+
+[database]
+url             = "${DATABASE_URL}"
+max_connections = 10
+
+[redis]
+url = "${REDIS_URL}"
+
+[prover]
+proving_key         = "${SP1_PROVING_KEY}"
+max_concurrent_jobs = 4
+
+[observability]
+log_level    = "info"
+metrics_port = 9090

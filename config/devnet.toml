@@ -1,0 +1,21 @@
+chain_id = "devnet"
+
+[solana]
+rpc_url    = "https://api.devnet.solana.com"
+program_id = "Sonar111111111111111111111111111111111111111"
+commitment = "confirmed"
+
+[database]
+url             = "${DATABASE_URL}"
+max_connections = 5
+
+[redis]
+url = "${REDIS_URL}"
+
+[prover]
+proving_key         = "${SP1_PROVING_KEY}"
+max_concurrent_jobs = 2
+
+[observability]
+log_level    = "debug"
+metrics_port = 9090

@@ -1,0 +1,16 @@
+[package]
+name = "sonar-program"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["lib"]
+
+[features]
+default       = []
+no-entrypoint = []
+test-bpf      = []
+
+[dependencies]
+anyhow = { workspace = true }
+# anchor-lang and solana-program added in Phase 2.1

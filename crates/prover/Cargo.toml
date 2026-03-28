@@ -1,0 +1,11 @@
+[package]
+name = "sonar-prover"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+sonar-common = { path = "../common" }
+anyhow       = { workspace = true }
+tracing      = { workspace = true }
+# sp1-sdk and groth16-solana added in Phase 3.1
+# (groth16-solana 0.1 requires solana-bn254 v2.x which conflicts with solana-sdk 1.18)

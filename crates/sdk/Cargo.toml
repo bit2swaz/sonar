@@ -1,0 +1,9 @@
+[package]
+name = "sonar-sdk"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+sonar-common  = { path = "../common" }
+anyhow        = { workspace = true }
+# anchor-lang and solana-program added in Phase 2

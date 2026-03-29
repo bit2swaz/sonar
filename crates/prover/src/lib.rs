@@ -1,42 +1,25 @@
 pub mod groth16_wrapper;
+pub mod registry;
+pub mod service;
 pub mod sp1_wrapper;
 
-use anyhow::{bail, Context};
-use sha2::{Digest, Sha256};
 use sonar_common::types::ComputationId;
 
-use crate::{groth16_wrapper::wrap_stark_to_groth16, sp1_wrapper::build_sp1_program};
-
-pub const FIBONACCI_ELF_PATH: &str = concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/../../programs/fibonacci/elf/fibonacci-program"
-);
+use crate::{
+    groth16_wrapper::wrap_stark_to_groth16, registry::resolve_computation,
+    sp1_wrapper::build_sp1_program,
+};
 
 pub fn fibonacci_computation_id() -> anyhow::Result<ComputationId> {
-    computation_id_for_elf(FIBONACCI_ELF_PATH)
+    registry::fibonacci_computation_id()
 }
 
 pub fn prove(computation_id: &[u8; 32], inputs: &[u8]) -> anyhow::Result<(Vec<u8>, Vec<u8>)> {
-    let elf_path = resolve_elf_path(computation_id)?;
-    let elf = build_sp1_program(elf_path)?;
+    let computation = resolve_computation(computation_id)?;
+    let elf = build_sp1_program(computation.elf_path)?;
     let (result, stark_proof) = sp1_wrapper::run_sp1_program(&elf, inputs)?;
     let proof = wrap_stark_to_groth16(&stark_proof, std::slice::from_ref(&result))?;
     Ok((proof, result))
-}
-
-fn resolve_elf_path(computation_id: &[u8; 32]) -> anyhow::Result<&'static str> {
-    if *computation_id == fibonacci_computation_id()? {
-        return Ok(FIBONACCI_ELF_PATH);
-    }
-
-    bail!("unknown computation id")
-}
-
-fn computation_id_for_elf(elf_path: &str) -> anyhow::Result<ComputationId> {
-    let elf = build_sp1_program(elf_path)
-        .with_context(|| format!("failed to compute computation id for {elf_path}"))?;
-    let digest = Sha256::digest(elf);
-    Ok(digest.into())
 }
 
 #[cfg(test)]
@@ -44,7 +27,10 @@ mod tests {
     use std::sync::OnceLock;
 
     use super::*;
-    use crate::{groth16_wrapper::wrap_stark_to_groth16, sp1_wrapper::run_sp1_program};
+    use crate::{
+        groth16_wrapper::wrap_stark_to_groth16, registry::FIBONACCI_ELF_PATH,
+        sp1_wrapper::run_sp1_program,
+    };
 
     static SP1_FIXTURE: OnceLock<(Vec<u8>, Vec<u8>)> = OnceLock::new();
     static PROVE_FIXTURE: OnceLock<(Vec<u8>, Vec<u8>)> = OnceLock::new();

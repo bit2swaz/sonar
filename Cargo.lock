@@ -5253,6 +5253,8 @@ name = "sonar"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "sonar-common",
+ "sonar-prover",
  "tokio",
  "tracing",
 ]
@@ -5307,13 +5309,16 @@ name = "sonar-prover"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "bincode",
  "groth16-solana",
+ "redis",
  "serde",
  "serde_json",
  "sha2",
  "sonar-common",
  "sp1-sdk",
+ "tokio",
  "tracing",
 ]
 

@@ -1014,11 +1014,19 @@ Write all code completely.
 
 ## Mini‑Phase 3.2 — Prover Service (Rust binary)
 
+**Status: ✅ Complete**
+
 **Definition of done:**
 - Prover binary listens for jobs (e.g., from Redis), executes `prove`, and pushes results to a response queue
 - Handles multiple concurrent jobs
 - Graceful shutdown
 - Tests with mock job queue
+
+**Implementation notes:**
+- `bin/prover.rs` now loads config, initializes tracing, configures the SP1 prover mode, and shuts down cleanly on `SIGTERM`/`Ctrl-C`.
+- `crates/prover/src/service.rs` provides a Redis-backed queue consumer with bounded concurrency via `Semaphore`, per-job task spawning, response publication, and in-flight drain-on-shutdown behavior.
+- `crates/prover/src/registry.rs` is now the source of truth for computation ID to ELF resolution; the public `prove` API reuses the same registry.
+- `crates/prover/tests/prover_service.rs` covers queue processing, concurrency limits, failure isolation, and graceful shutdown using a mock in-memory queue so CI does not require a live Redis instance.
 
 ---
 
@@ -1614,7 +1622,7 @@ Write all files completely. Make the grant applications compelling.
 Phase 0  — Project Hygiene        [x] 0.1 [x] 0.2
 Phase 1  — Foundation             [x] 1.1 [x] 1.2 [x] 1.3 [x] 1.4
 Phase 2  — Solana Program         [x] 2.1 [x] 2.2 [x] 2.3
-Phase 3  — Off‑Chain Prover       [x] 3.1 [ ] 3.2
+Phase 3  — Off‑Chain Prover       [x] 3.1 [x] 3.2
 Phase 4  — State Indexer          [ ] 4.1 [ ] 4.2
 Phase 5  — Coordinator & Queue    [ ] 5.1
 Phase 6  — End‑to‑End MVP         [ ] 6.1

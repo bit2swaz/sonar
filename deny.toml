@@ -6,13 +6,27 @@ allow = [
     "BSD-2-Clause",
     "BSD-3-Clause",
     "ISC",
-    "Unicode-DFS-2016",
     "Unicode-3.0",
     "CC0-1.0",
     "Zlib",
 ]
 # Allow confidence threshold — some crates lack SPDX identifiers.
 confidence-threshold = 0.8
+
+exceptions = [
+    { name = "downloader", allow = ["LGPL-3.0-or-later"] },
+    { name = "dynasm", allow = ["MPL-2.0"] },
+    { name = "dynasmrt", allow = ["MPL-2.0"] },
+    { name = "option-ext", allow = ["MPL-2.0"] },
+    { name = "webpki-roots", allow = ["CDLA-Permissive-2.0"] },
+    { name = "halo2", allow = ["LicenseRef-Bootstrap-1.0"] },
+]
+
+[[licenses.clarify]]
+name = "halo2"
+version = "0.1.0-beta.2"
+expression = "LicenseRef-Bootstrap-1.0"
+license-files = [{ path = "COPYING", hash = 0x106164e0 }]
 
 [bans]
 # Warn on duplicate versions; upgrade workspace to resolve.
@@ -25,7 +39,16 @@ highlight = "all"
 # Crates with known CVEs are denied (default in cargo-deny 0.14+).
 # unmaintained/unsound/notice severity keys were removed in 0.14; use ignore list below.
 yanked = "deny"
-ignore = []
+ignore = [
+    # Transitive advisories from the pinned SP1 / Groth16 stack used by the prover.
+    # These are tracked upstream; no safe replacements are available in our current dependency graph.
+    "RUSTSEC-2021-0139",
+    "RUSTSEC-2024-0388",
+    "RUSTSEC-2024-0436",
+    "RUSTSEC-2025-0119",
+    "RUSTSEC-2025-0134",
+    "RUSTSEC-2025-0141",
+]
 
 [sources]
 # Only allow crates from crates.io and our own git sources.

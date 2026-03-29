@@ -33,9 +33,12 @@ path = "bin/prover.rs"
 anyhow = { workspace = true }
 tokio  = { workspace = true }
 tracing = { workspace = true }
+sonar-common = { workspace = true }
+sonar-prover = { workspace = true }
 
 [workspace.dependencies]
 sonar-common = { path = "crates/common" }
+sonar-prover = { path = "crates/prover" }
 # Async runtime
 tokio = { version = "1", features = ["full"] }
 # Solana

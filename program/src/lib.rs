@@ -21,9 +21,9 @@ mod verifier_registry;
 
 use verifier_registry::{DEMO_COMPUTATION_ID, DEMO_PUBLIC_INPUTS_LEN, DEMO_VERIFYING_KEY};
 
-declare_id!("5B1rXQ71oEWUPc3AemCBTQtb5pmGAnX1jbGvZKcgBy84");
+declare_id!("EE2sQ2VRa1hY3qjPQ1PEwuPZX6dGwTZwHMCumWrGn3sV");
 
-const MAX_RESULT_BYTES: usize = 10 * 1024;
+const MAX_RESULT_BYTES: usize = 10_000;
 const GROTH16_PROOF_A_BYTES: usize = 64;
 const GROTH16_PROOF_B_BYTES: usize = 128;
 const GROTH16_PROOF_C_BYTES: usize = 64;

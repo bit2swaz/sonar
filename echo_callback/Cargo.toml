@@ -1,0 +1,26 @@
+[package]
+name = "echo-callback"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Minimal no-op Anchor program used as a callback receiver in integration tests."
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "echo_callback"
+
+[features]
+default        = []
+no-entrypoint  = []
+test-sbf       = []
+idl-build      = ["anchor-lang/idl-build"]
+cpi            = []
+custom-heap    = []
+custom-panic   = []
+anchor-debug   = []
+no-idl         = []
+no-log-ix-name = []
+
+[dependencies]
+anchor-lang = { workspace = true }
+solana_program = { package = "sonar-solana-program-shim", path = "../crates/solana-program-shim" }

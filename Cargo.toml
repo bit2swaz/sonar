@@ -7,6 +7,7 @@ members = [
     "crates/solana-program-shim",
     "crates/sdk",
     "program",
+    "echo_callback",
 ]
 resolver = "2"
 

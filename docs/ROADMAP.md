@@ -870,6 +870,8 @@ Write the complete code. No stubs.
 
 ## Mini‑Phase 2.3 — Program Tests: Full TDD on Solana Devnet Fork
 
+**Status:** ✅ Complete
+
 **Definition of done:**
 - All instructions tested with real transactions on a forked devnet (using `solana-test-validator` and `anchor test`)
 - Access control: 3 tests
@@ -878,6 +880,11 @@ Write the complete code. No stubs.
 - Refund flow: 2 tests
 - Edge cases: 4 tests
 - Total: minimum 17 tests, all passing
+
+**Delivered:**
+- `program/tests/sonar.ts` now covers 17 end-to-end Anchor integration tests across access control, request flow, callback flow, refund flow, and edge cases.
+- A minimal `echo_callback` helper program is included so callback CPI behavior is exercised with a real executable target.
+- CI verifies the passing test-body sentinel (`sonar integration checks passed`) to tolerate the known Anchor v0.32 validator cleanup ENOENT after a successful suite.
 
 ---
 
@@ -1598,7 +1605,7 @@ Write all files completely. Make the grant applications compelling.
 ```
 Phase 0  — Project Hygiene        [x] 0.1 [x] 0.2
 Phase 1  — Foundation             [x] 1.1 [x] 1.2 [x] 1.3 [x] 1.4
-Phase 2  — Solana Program         [x] 2.1 [x] 2.2 [ ] 2.3
+Phase 2  — Solana Program         [x] 2.1 [x] 2.2 [x] 2.3
 Phase 3  — Off‑Chain Prover       [ ] 3.1 [ ] 3.2
 Phase 4  — State Indexer          [ ] 4.1 [ ] 4.2
 Phase 5  — Coordinator & Queue    [ ] 5.1

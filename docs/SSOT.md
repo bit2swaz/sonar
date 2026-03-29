@@ -316,8 +316,8 @@ pub fn compute_historical_avg(ctx: &Context, params: HistoricalAvg) -> Result<u6
 > **Implementation status (updated March 2026):**  
 > ✅ Phase 0 (ROADMAP mini-phases 0.1–0.2) — CI, linting, secret scanning, dependency pinning  
 > ✅ Phase 1 (ROADMAP mini-phases 1.1–1.4) — workspace scaffold, shared types (34 tests), config, observability  
-> ✅ Phase 2 partial (ROADMAP mini-phases 2.1–2.2) — Anchor program fully implemented: `request`/`callback`/`refund`, Groth16 verification, result PDA, callback CPI, 18 error codes, inline unit tests; anchor build + cargo test all pass  
-> ⏳ Next: Phase 2.3 — full TDD TypeScript test suite (17+ tests)
+> ✅ Phase 2 (ROADMAP mini-phases 2.1–2.3) — Anchor program implemented and covered by a 17-test TypeScript integration suite against a local validator, including Groth16 callback verification, refund paths, callback CPI, and edge cases  
+> ⏭️ Next: Phase 3.1 — off-chain prover bring-up
 
 1. **Phase 0 – Foundation (Closed prototype)**  
    - Set up Rust toolchains, SP1, and groth16‑solana.  

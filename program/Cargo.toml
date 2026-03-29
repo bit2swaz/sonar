@@ -25,3 +25,4 @@ no-log-ix-name = []
 [dependencies]
 anchor-lang    = { workspace = true }
 anyhow         = { workspace = true }
+groth16-solana = { workspace = true }

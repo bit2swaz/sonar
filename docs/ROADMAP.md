@@ -90,7 +90,7 @@ Jobs:
         (install: cargo install cargo-audit first via cache)
     env:
       SOLANA_RPC_URL: "https://api.devnet.solana.com"
-      SONAR_PROGRAM_ID: "Sonar111111111111111111111111111111111111111"
+      SONAR_PROGRAM_ID: "5B1rXQ71oEWUPc3AemCBTQtb5pmGAnX1jbGvZKcgBy84"
       PRIVATE_KEY: "0x0000000000000000000000000000000000000000000000000000000000000000"
 
 File 2: `.github/workflows/security.yml`
@@ -119,7 +119,7 @@ Comprehensive gitignore for Rust + Solana + secrets:
 File 4: `.env.example`
 Template showing every required environment variable with placeholder values:
   SOLANA_RPC_URL=https://api.devnet.solana.com
-  SONAR_PROGRAM_ID=Sonar111111111111111111111111111111111111111
+  SONAR_PROGRAM_ID=5B1rXQ71oEWUPc3AemCBTQtb5pmGAnX1jbGvZKcgBy84
   PRIVATE_KEY=0x0000000000000000000000000000000000000000000000000000000000000000
   REDIS_URL=redis://localhost:6379
   DATABASE_URL=postgresql://postgres:password@localhost:5432/sonar
@@ -728,7 +728,7 @@ File 1: program/Cargo.toml
 
 File 2: program/Anchor.toml
   [programs.devnet]
-  sonar = "Sonar111111111111111111111111111111111111111"
+  sonar = "5B1rXQ71oEWUPc3AemCBTQtb5pmGAnX1jbGvZKcgBy84"
 
   [registry]
   url = "https://api.apr.dev"
@@ -752,7 +752,7 @@ File 2: program/Anchor.toml
 File 3: program/src/lib.rs
 Placeholder:
   use anchor_lang::prelude::*;
-  declare_id!("Sonar111111111111111111111111111111111111111");
+  declare_id!("5B1rXQ71oEWUPc3AemCBTQtb5pmGAnX1jbGvZKcgBy84");
 
   #[program]
   pub mod sonar {
@@ -819,19 +819,20 @@ Key requirements:
 - Program ID must match the one in Anchor.toml.
 - `request` instruction:
   - Derives PDA for `request_metadata` using `[b"request", request_id]`.
-  - Initializes account with given fields.
+  - Initializes both `request_metadata` and a Sonar-owned `result_account` PDA using `[b"result", request_id]`.
+  - Stores `payer`, `callback_program`, `result_account`, `computation_id`, deadline, fee, and status in metadata.
   - Transfers fee from payer to the request_metadata account (or holds in vault). Use token program if fee is in $SONAR, or native lamports if in SOL.
 - `callback` instruction:
-  - Uses `has_one = result_account` to ensure correctness.
-  - Calls `groth16-solana` syscall to verify the proof.
-  - On success: writes result to result_account, updates metadata status to Completed, transfers fee to prover (or vault).
+  - Uses `has_one = result_account` and `has_one = callback_program` to ensure correctness.
+  - Verifies proofs through `groth16-solana` using a compile-time verifier registry keyed by `computation_id`.
+  - On success: writes result to the `result_account` PDA, updates metadata status to Completed, CPIs into the callback program using a `sonar_callback` payload, and transfers fee to prover (or vault).
   - On failure: returns `ErrorCode::ProofVerificationFailed`.
 - `refund` instruction:
-  - Checks deadline has passed, status is Pending.
+  - Checks deadline has passed, status is Pending, and the signer matches the original payer.
   - Transfers fee back to payer, updates status to Refunded.
 - All error codes defined.
 
-Implement the syscall verification using the `solana_program::zk::verify_groth16` syscall. The proof must be a Groth16 proof with alt_bn128 curve.
+Implement verification via `groth16-solana`, which wraps the Solana alt_bn128 verification syscalls. Seed the verifier registry with a built-in demo computation ID and verifying key so Phase 2.3 can use the crate’s known-good fixtures.
 
 Write the complete code. No stubs.
 ```
@@ -864,7 +865,9 @@ Write `program/tests/sonar.ts` (TypeScript) with comprehensive tests using Ancho
 Write these tests:
 
 ACCESS CONTROL (3 tests):
-  test_request_with_wrong_signer – attempt request with a payer that doesn't match expected? (actually payer is always signer, so test that callback_program must be a specific program? We'll just test that only owner can set something? For now, test that only expected signers can call privileged functions (none in Phase 1). But we can test that only the request owner can refund? Not needed in this phase. For MVP, there is no owner – any user can request. We'll test that any payer can create a request, and any prover can submit callback (no permissioning). That's fine.
+  test_only_original_payer_can_refund – a different signer attempts `refund`, should fail with `RefundPayerMismatch`.
+  test_request_accepts_executable_callback_program – request succeeds when callback program is executable.
+  test_request_rejects_non_executable_callback_program – request fails when callback program is not executable.
 
 REQUEST FLOW (3 tests):
   test_request_creates_metadata – call request, fetch the PDA, verify fields match.
@@ -884,7 +887,7 @@ REFUND FLOW (2 tests):
 
 EDGE CASES (4 tests):
   test_callback_with_duplicate_request_id – callback for already completed request, should revert.
-  test_callback_with_result_account_not_owned_by_program – should fail (has_one constraint).
+  test_callback_with_wrong_result_pda – passing a mismatched result PDA should fail (`has_one` / seeds constraint).
   test_large_inputs – ensure program can handle inputs up to 10 KiB (or config limit).
   test_concurrent_requests – multiple requests in one block, all should succeed.
 

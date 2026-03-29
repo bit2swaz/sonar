@@ -417,7 +417,7 @@ To ensure quality and maintainability, the repository will enforce:
 ### A.1 Program ID (`sonar_program`)
 
 ```
-sonar_program = "Sonar111111111111111111111111111111111111111"
+sonar_program = "5B1rXQ71oEWUPc3AemCBTQtb5pmGAnX1jbGvZKcgBy84"
 ```
 
 ### A.2 Instruction Layout
@@ -437,17 +437,22 @@ pub struct Request<'info> {
     pub payer: Signer<'info>,
     /// CHECK: The program that will receive the callback.
     pub callback_program: UncheckedAccount<'info>,
-    /// CHECK: The account where the result will be written (PDA derived from request_id).
-    #[account(mut)]
-    pub result_account: UncheckedAccount<'info>,
     #[account(
         init,
         payer = payer,
         space = RequestMetadata::LEN,
-        seeds = [b"request", request_id.as_ref()],
+    seeds = [b"request", params.request_id.as_ref()],
         bump
     )]
     pub request_metadata: Account<'info, RequestMetadata>,
+  #[account(
+    init,
+    payer = payer,
+    space = ResultAccount::LEN,
+    seeds = [b"result", params.request_id.as_ref()],
+    bump
+  )]
+  pub result_account: Account<'info, ResultAccount>,
     pub system_program: Program<'info, System>,
 }
 
@@ -467,13 +472,24 @@ pub struct RequestParams {
 #[account]
 pub struct RequestMetadata {
     pub request_id: [u8; 32],
+  pub payer: Pubkey,
     pub callback_program: Pubkey,
     pub result_account: Pubkey,
+  pub computation_id: [u8; 32],
     pub deadline: u64,
     pub fee: u64,
     pub status: RequestStatus,
     pub completed_at: Option<u64>,
     pub bump: u8,
+}
+
+#[account]
+pub struct ResultAccount {
+  pub request_id: [u8; 32],
+  pub result: Vec<u8>,
+  pub is_set: bool,
+  pub written_at: Option<u64>,
+  pub bump: u8,
 }
 
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, PartialEq)]
@@ -494,10 +510,15 @@ pub struct Callback<'info> {
         seeds = [b"request", request_metadata.request_id.as_ref()],
         bump = request_metadata.bump,
         has_one = result_account,
+    has_one = callback_program,
     )]
     pub request_metadata: Account<'info, RequestMetadata>,
-    /// CHECK: Verified via proof.
-    pub result_account: UncheckedAccount<'info>,
+  #[account(
+    mut,
+    seeds = [b"result", request_metadata.request_id.as_ref()],
+    bump = result_account.bump,
+  )]
+  pub result_account: Account<'info, ResultAccount>,
     /// CHECK: The caller (prover) pays for the callback.
     pub prover: Signer<'info>,
     /// CHECK: The callback program will be invoked via CPI.
@@ -512,7 +533,7 @@ pub struct CallbackParams {
 }
 ```
 
-**Verification:** The program calls the built‑in `solana_program::zk::verify_groth16` syscall. If verification passes, the `result_account` is written, `request_metadata.status` is set to `Completed`, and the prover receives the fee (or part of it).
+**Verification:** The program uses the `groth16-solana` verifier, which is a thin wrapper over Solana’s alt_bn128 syscalls. Verifying keys are selected from a compile-time registry keyed by `computation_id`; the MVP ships with a built-in demo verifier key used by bring-up and Phase 2.3 tests. If verification passes, the `result_account` is written, `request_metadata.status` is set to `Completed`, the program CPIs into `callback_program` using the `sonar_callback` instruction ABI, and the prover receives the fee.
 
 #### A.2.3 `refund`
 
@@ -523,6 +544,7 @@ pub struct Refund<'info> {
         mut,
         seeds = [b"request", request_metadata.request_id.as_ref()],
         bump = request_metadata.bump,
+    has_one = payer,
         constraint = request_metadata.status == RequestStatus::Pending,
         constraint = Clock::get()?.slot > request_metadata.deadline,
     )]
@@ -552,8 +574,26 @@ pub enum ErrorCode {
     InvalidRequestId,
     #[msg("Callback program does not match")]
     CallbackProgramMismatch,
+    #[msg("Callback program must be executable")]
+    CallbackProgramNotExecutable,
+    #[msg("Callback CPI failed")]
+    CallbackInvokeFailed,
     #[msg("Insufficient fee")]
     InsufficientFee,
+    #[msg("Refund caller does not match the original payer")]
+    RefundPayerMismatch,
+    #[msg("No verifier is registered for this computation ID")]
+    UnknownComputationId,
+    #[msg("Groth16 proof length is invalid")]
+    InvalidProofLength,
+    #[msg("Public inputs length is invalid for the configured verifier")]
+    InvalidPublicInputsLength,
+    #[msg("Each public input must be exactly 32 bytes")]
+    InvalidPublicInputSize,
+    #[msg("Result payload exceeds the configured size limit")]
+    ResultTooLarge,
+    #[msg("Lamport arithmetic overflowed")]
+    LamportOverflow,
 }
 ```
 
@@ -630,16 +670,35 @@ The prover (or a relayer) sends a **second transaction** containing the `callbac
 
 The Sonar program, after verification, **CPIs into the callback program** with the result and request metadata. The callback program can then use the result to update its own state.
 
+The callback ABI is an Anchor-style instruction named `sonar_callback` with this payload:
+
+```rust
+#[derive(AnchorSerialize, AnchorDeserialize, Clone)]
+pub struct SonarCallbackPayload {
+  pub request_id: [u8; 32],
+  pub result: Vec<u8>,
+}
+```
+
+The fixed callback accounts are:
+- `request_metadata` (readonly)
+- `result_account` (readonly)
+- `prover` (readonly signer)
+
+Any additional accounts required by the user program are appended as remaining accounts on the `callback` transaction and forwarded verbatim by Sonar during the CPI.
+
 ### C.3 Result Account Layout
 
-The `result_account` is a PDA derived as:
+The `result_account` is a Sonar-owned PDA derived as:
 ```
 seeds = [b"result", request_id.as_ref()], bump
 ```
 It stores:
+- The request ID.
 - The result bytes (up to 10 KiB, configurable).
-- A flag indicating whether it’s been consumed.
+- A flag indicating whether it’s been written.
 - The slot when it was written.
+- The PDA bump.
 
 The callback program can read this account after the CPI, or the user program can read it directly.
 

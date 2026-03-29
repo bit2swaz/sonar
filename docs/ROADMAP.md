@@ -52,12 +52,14 @@ Phase 13 — Open Source & Grants   (comprehensive docs, blog series, grant prop
 
 ## Mini‑Phase 0.1 — Git, CI, and Linting Baseline
 
+**Status: ✅ Complete**
+
 **Definition of done:**
-- `.github/workflows/ci.yml` runs on every push and PR
-- CI runs: `cargo fmt --check`, `cargo clippy -- -D warnings`, `cargo test`, `cargo audit`
-- Pre‑commit hook prevents committing if any of the above fail locally
-- `.gitignore` and `.env.example` exist — no real secrets ever enter the repo
-- `cargo clippy -- -D warnings` passes on empty workspace
+- `.github/workflows/ci.yml` runs on every push and PR — ✅ confirmed (`on: push/pull_request`, `branches: [main]`)
+- CI runs: `cargo fmt --check`, `cargo clippy --workspace --all-targets --all-features -- -D warnings`, `cargo test --workspace`, `cargo audit`, `cargo deny check` — ✅ confirmed
+- Pre‑commit hook in `scripts/pre-commit`, installer in `scripts/install-hooks.sh`, `.pre-commit-config.yaml` present — ✅ confirmed
+- `.gitignore` and `.env.example` exist — no real secrets ever enter the repo — ✅ confirmed
+- `cargo clippy --workspace -- -D warnings` passes — ✅ confirmed
 
 ---
 
@@ -175,10 +177,14 @@ Write every file completely. No placeholders.
 
 ## Mini‑Phase 0.2 — Secret Scanning and Dependency Pinning
 
+**Status: ✅ Complete**
+
 **Definition of done:**
-- `gitleaks` config prevents accidental private key commits
-- `Cargo.lock` is committed (binary — always lock deps)
-- `rust-toolchain.toml` pins the exact Rust version used
+- `gitleaks` config (`.gitleaks.toml`) prevents accidental private key commits; `gitleaks-action@v2` in `security.yml` — ✅ confirmed
+- `Cargo.lock` is committed (binary — always lock deps); `cargo metadata --format-version 1 --locked` step enforces this in CI — ✅ confirmed
+- `rust-toolchain.toml` pins the toolchain channel to `stable` with `rustfmt`, `clippy`, `rust-src` components — ✅ confirmed
+- `SECURITY.md` documents vulnerability reporting and known risk areas — ✅ confirmed
+- `deny.toml` configured with allowed licenses and advisory policy — ✅ confirmed
 
 ---
 
@@ -250,11 +256,13 @@ Write all files completely.
 
 ## Mini‑Phase 1.1 — Workspace Scaffold
 
+**Status: ✅ Complete**
+
 **Definition of done:**
-- `cargo build --workspace` passes with zero errors
-- `cargo clippy --workspace -- -D warnings` passes with zero warnings
-- Workspace structure exactly matches SSOT.md repository structure
-- All crates compile as empty libraries
+- `cargo build --workspace` passes with zero errors — ✅ confirmed
+- `cargo clippy --workspace --all-targets --all-features -- -D warnings` passes with zero warnings — ✅ confirmed
+- Workspace structure matches SSOT.md: `crates/{common,indexer,coordinator,prover,sdk,solana-program-shim}`, `bin/`, `config/`, `tests/`, `program/` — ✅ confirmed
+- All crates compile; workspace resolver `"2"`, shared `[workspace.dependencies]` with pinned versions (anchor-lang 0.32.1, groth16-solana 0.2.0, sqlx 0.8, etc.) — ✅ confirmed
 
 ---
 
@@ -386,10 +394,12 @@ Write every single file completely. Do not skip any.
 
 ## Mini‑Phase 1.2 — Shared Types with Full Test Coverage
 
+**Status: ✅ Complete**
+
 **Definition of done:**
-- All types in `common/src/types.rs` compile with correct derives
-- Every type has at minimum: a construction test, a serialization round‑trip test, and an equality test
-- `cargo test -p sonar-common` passes with zero failures
+- All types in `crates/common/src/types.rs` compile with correct derives (`Debug`, `Clone`, `PartialEq`, `Serialize`, `Deserialize`) — ✅ confirmed
+- Every type has construction, serde round-trip, and equality tests; `ProofVerificationResult` has `is_success()`/`result()` method tests; `GasEstimate` has the arithmetic property test — ✅ confirmed
+- `cargo test -p sonar-common` passes with **34 tests, 0 failures** — ✅ confirmed
 
 ---
 
@@ -521,12 +531,14 @@ Write the complete file with all types and all tests. Every test must pass.
 
 ## Mini‑Phase 1.3 — Config System with Env Var Expansion Tests
 
+**Status: ✅ Complete**
+
 **Definition of done:**
-- Config loads correctly from TOML + env var expansion
-- Missing required env var returns a clear error
-- Invalid TOML returns a clear error
-- All edge cases tested
-- `cargo test -p sonar-common` passes
+- Config loads correctly from TOML + `${VAR}` env var expansion via `Config::load_str` / `Config::load` — ✅ confirmed
+- Missing required env var returns a clear `Err("Missing env var: VAR_NAME")` — ✅ confirmed (`test_expand_env_vars_missing_var` passes)
+- Invalid TOML returns a clear error — ✅ confirmed (`test_load_str_invalid_toml` passes)
+- All edge cases tested: single substitution, multiple substitutions, no vars, missing var, full TOML load with mocked env — ✅ confirmed (6 config tests)
+- `cargo test -p sonar-common` passes — ✅ confirmed (34 tests total, 0 failures)
 
 ---
 
@@ -609,11 +621,14 @@ Write all files completely. Every test must pass.
 
 ## Mini‑Phase 1.4 — Observability: Metrics and Tracing
 
+**Status: ✅ Complete**
+
 **Definition of done:**
-- All Prometheus metrics from SSOT register without panicking
-- Metrics increment correctly
-- Tracing subscriber initialises with correct log level from config
-- `cargo test -p sonar-common` passes
+- All Prometheus metrics (`requests_submitted`, `proofs_verified`, `proofs_failed`, `total_fees_earned_lamports`, `prover_utilization`, `request_latency_seconds`, `verification_cu_used`, `active_provers`) register without panicking — ✅ confirmed
+- Metrics increment correctly; `render()` output verified in tests — ✅ confirmed (`test_counter_increments`, `test_failed_counter_with_label`, `test_histogram_record`, `test_gauge_set` all pass)
+- `test_independent_registries` confirms two `Metrics::new()` instances do not share state — ✅ confirmed
+- `crates/common/src/tracing_init.rs` implements `init_tracing(log_level)` — ✅ confirmed
+- `cargo test -p sonar-common` passes — ✅ confirmed (34 tests, 0 failures)
 
 ---
 

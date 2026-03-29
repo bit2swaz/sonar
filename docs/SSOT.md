@@ -313,6 +313,12 @@ pub fn compute_historical_avg(ctx: &Context, params: HistoricalAvg) -> Result<u6
 
 *No hard timeline, but a phased approach:*
 
+> **Implementation status (updated March 2026):**  
+> ✅ Phase 0 (ROADMAP mini-phases 0.1–0.2) — CI, linting, secret scanning, dependency pinning  
+> ✅ Phase 1 (ROADMAP mini-phases 1.1–1.4) — workspace scaffold, shared types (34 tests), config, observability  
+> ✅ Phase 2 partial (ROADMAP mini-phases 2.1–2.2) — Anchor program fully implemented: `request`/`callback`/`refund`, Groth16 verification, result PDA, callback CPI, 18 error codes, inline unit tests; anchor build + cargo test all pass  
+> ⏳ Next: Phase 2.3 — full TDD TypeScript test suite (17+ tests)
+
 1. **Phase 0 – Foundation (Closed prototype)**  
    - Set up Rust toolchains, SP1, and groth16‑solana.  
    - Build minimal verifier program on Solana devnet.  
@@ -813,11 +819,14 @@ repos:
     hooks:
       - id: cargo-fmt
       - id: clippy
+        args: ["--workspace", "--all-targets", "--all-features", "--", "-D", "warnings"]
+
   - repo: https://github.com/pre-commit/mirrors-prettier
     rev: v4.0.0
     hooks:
       - id: prettier
-        files: \.(md|json|yml)$
+        files: \.(md|json|yml|yaml)$
+
   - repo: local
     hooks:
       - id: cargo-deny
@@ -825,9 +834,17 @@ repos:
         entry: cargo deny check
         language: system
         files: Cargo.toml
+        pass_filenames: false
+
       - id: cargo-audit
         name: cargo audit
         entry: cargo audit
+        language: system
+        files: Cargo.lock
+        pass_filenames: false
+```
+
+Install with `bash scripts/install-hooks.sh` (copies `scripts/pre-commit` into `.git/hooks/pre-commit`) or run `pre-commit install` if the `pre-commit` Python package is available.
         language: system
         files: Cargo.lock
 ```

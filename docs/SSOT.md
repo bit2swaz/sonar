@@ -854,15 +854,25 @@ jobs:
       - name: Run cargo fmt
         run: cargo fmt -- --check
       - name: Run clippy
-        run: cargo clippy -- -D warnings
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
       - name: Run tests (no GPU)
-        run: cargo test -- --skip integration
+        run: cargo test --workspace -- --skip integration
       - name: Run integration tests (local validator)
         run: |
           solana-test-validator --quiet &
           sleep 2
           cargo test --test integration -- --ignored
+      - name: Install Solana CLI
+        run: sh -c "$(curl -sSfL https://release.anza.xyz/v3.0.13/install)"
+      - name: Install Anchor CLI prerequisites
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libudev-dev
+      - name: Install Anchor CLI
+        run: cargo install anchor-cli --version 0.32.1 --locked
+      - name: Build Anchor program
+        run: anchor build
 ```
+
+Current repository note: the workspace is controlled by the root `Anchor.toml`, not by a nested `program/Anchor.toml`. The current Phase 2 bring-up path uses a root-level Node test script for the placeholder integration check and a local-validator `provider.cluster = "Localnet"` configuration.
 
 ### F.3 Mock Prover for Local Development
 

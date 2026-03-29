@@ -689,8 +689,8 @@ Write all files completely. All tests must pass.
 
 **Definition of done:**
 - `anchor build` passes with zero errors
-- `anchor test` passes with placeholder test
-- Anchor.toml correctly configured for devnet fork testing
+- Placeholder Anchor test script passes, and any remaining non-zero `anchor test` exit must be traced to tooling rather than the test body itself
+- Root `Anchor.toml` correctly configures the workspace program for local validator testing
 
 ---
 
@@ -700,7 +700,7 @@ Write all files completely. All tests must pass.
 You are building `sonar`. Read SSOT.md in full before writing any code.
 This is Mini‑Phase 2.1: Anchor Project Setup.
 
-Set up the complete Anchor project inside `program/`.
+Set up the complete Anchor project for the workspace-root Anchor configuration and the `program/` crate.
 
 **Use Context7** to get the latest Anchor framework setup instructions and best practices for Solana program testing.
 
@@ -726,7 +726,10 @@ File 1: program/Cargo.toml
   groth16-solana = { workspace = true }
   # ... other deps
 
-File 2: program/Anchor.toml
+File 2: Anchor.toml
+  [programs.localnet]
+  sonar = "5B1rXQ71oEWUPc3AemCBTQtb5pmGAnX1jbGvZKcgBy84"
+
   [programs.devnet]
   sonar = "5B1rXQ71oEWUPc3AemCBTQtb5pmGAnX1jbGvZKcgBy84"
 
@@ -734,20 +737,22 @@ File 2: program/Anchor.toml
   url = "https://api.apr.dev"
 
   [provider]
-  cluster = "devnet"
+  cluster = "Localnet"
   wallet = "~/.config/solana/id.json"
 
   [scripts]
-  test = "anchor test --skip-local-validator"
+  test = "TS_NODE_PROJECT=./tsconfig.json node -r ts-node/register/transpile-only ./program/tests/sonar.ts"
 
-  [features]
-  skip-lint = false
+  [workspace]
+  members = ["program"]
+
+  [toolchain]
+  anchor_version = "0.32.1"
+  solana_version = "3.0.13"
+  package_manager = "npm"
 
   [test]
-  validator = {
-    url = "https://api.devnet.solana.com",
-    commit = "confirmed"
-  }
+  startup_wait = 15000
 
 File 3: program/src/lib.rs
 Placeholder:
@@ -789,6 +794,9 @@ Placeholder:
 
 File 4: program/tests/sonar.ts
 Placeholder test that just verifies the program can be deployed.
+
+CI / Ubuntu note:
+  - GitHub's `ubuntu-latest` runner needs `pkg-config` and `libudev-dev` installed before `cargo install anchor-cli --version 0.32.1 --locked`, otherwise the transitive `hidapi` build fails while looking for `libudev`.
 
 Write all files. `anchor build` and `anchor test` must pass (with mock RPC).
 ```

@@ -687,10 +687,12 @@ Write all files completely. All tests must pass.
 
 ## Mini‑Phase 2.1 — Anchor Project Setup
 
+**Status: ✅ Complete**
+
 **Definition of done:**
-- `anchor build` passes with zero errors
-- Placeholder Anchor test script passes, and any remaining non-zero `anchor test` exit must be traced to tooling rather than the test body itself
-- Root `Anchor.toml` correctly configures the workspace program for local validator testing
+- `anchor build` passes with zero errors — ✅ confirmed
+- Placeholder Anchor test script passes — ✅ confirmed (`sonar integration checks passed` printed); the post-suite non-zero exit from `anchor test` is traced to Anchor CLI v0.32 validator-process cleanup (ENOENT in its own signal handler), not the test body. CI captures the output and verifies the success message explicitly.
+- Root `Anchor.toml` correctly configures the workspace program for local validator testing — ✅ confirmed (`cluster = "Localnet"`, `startup_wait = 15000`, root `Anchor.toml`)
 
 ---
 
@@ -805,11 +807,15 @@ Write all files. `anchor build` and `anchor test` must pass (with mock RPC).
 
 ## Mini‑Phase 2.2 — Full Implementation of Sonar Program
 
+**Status: ✅ Complete**
+
 **Definition of done:**
-- Program implements `request`, `callback`, `refund` instructions per SSOT Appendix A
-- Uses `groth16-solana` syscall for verification
-- All accounts and constraints correctly implemented
-- `anchor build` passes
+- Program implements `request`, `callback`, `refund` instructions per SSOT Appendix A — ✅ confirmed
+- Uses `groth16-solana` syscall for on-chain Groth16 verification via `alt_bn128` — ✅ confirmed
+- All accounts and constraints correctly implemented (PDA seeds, `has_one`, deadline, fee, status guards) — ✅ confirmed
+- `anchor build` passes — ✅ confirmed; `cargo clippy --workspace --all-targets --all-features -- -D warnings` and `cargo test --workspace` also pass
+- Verifier registry seeded with `DEMO_COMPUTATION_ID` (sha256 of `sonar:demo-groth16-fixture:v1`) and the `groth16-solana` crate's built-in fixture verifying key — ✅ confirmed
+- Result PDA (`[b"result", request_id]`), callback CPI with `sonar_callback` discriminator, fee transfer, and all 18 error codes implemented — ✅ confirmed
 
 ---
 
@@ -1575,9 +1581,9 @@ Write all files completely. Make the grant applications compelling.
 ## Phase Completion Checklist
 
 ```
-Phase 0  — Project Hygiene        [ ] 0.1 [ ] 0.2
-Phase 1  — Foundation             [ ] 1.1 [ ] 1.2 [ ] 1.3 [ ] 1.4
-Phase 2  — Solana Program         [ ] 2.1 [ ] 2.2 [ ] 2.3
+Phase 0  — Project Hygiene        [x] 0.1 [x] 0.2
+Phase 1  — Foundation             [x] 1.1 [x] 1.2 [x] 1.3 [x] 1.4
+Phase 2  — Solana Program         [x] 2.1 [x] 2.2 [ ] 2.3
 Phase 3  — Off‑Chain Prover       [ ] 3.1 [ ] 3.2
 Phase 4  — State Indexer          [ ] 4.1 [ ] 4.2
 Phase 5  — Coordinator & Queue    [ ] 5.1

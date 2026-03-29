@@ -26,3 +26,4 @@ no-log-ix-name = []
 anchor-lang    = { workspace = true }
 anyhow         = { workspace = true }
 groth16-solana = { workspace = true }
+solana-program = { package = "sonar-solana-program-shim", path = "../crates/solana-program-shim" }

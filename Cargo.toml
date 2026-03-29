@@ -4,6 +4,7 @@ members = [
     "crates/indexer",
     "crates/coordinator",
     "crates/prover",
+    "crates/solana-program-shim",
     "crates/sdk",
     "program",
 ]

@@ -1,0 +1,12 @@
+[package]
+name = "sonar-solana-program-shim"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[lib]
+name = "sonar_solana_program_shim"
+path = "src/lib.rs"
+
+[dependencies]
+anchor-lang = { workspace = true }

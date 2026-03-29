@@ -2127,6 +2127,7 @@ dependencies = [
  "anchor-lang",
  "anyhow",
  "groth16-solana",
+ "sonar-solana-program-shim",
 ]
 
 [[package]]
@@ -2144,6 +2145,13 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "sonar-common",
+]
+
+[[package]]
+name = "sonar-solana-program-shim"
+version = "0.1.0"
+dependencies = [
+ "anchor-lang",
 ]
 
 [[package]]

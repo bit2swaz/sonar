@@ -36,13 +36,13 @@ tracing = { workspace = true }
 # Async runtime
 tokio = { version = "1", features = ["full"] }
 # Solana
-solana-sdk     = "1.18"
-solana-client  = "1.18"
-solana-program = "1.18"
-anchor-lang    = "0.30"
+solana-sdk     = "2.3.1"
+solana-client  = "2.3.1"
+solana-program = "2.3.0"
+anchor-lang    = "0.32.1"
 # ZK
-sp1-sdk        = "2.0"
-groth16-solana = "0.1"
+sp1-sdk        = "6.0.2"
+groth16-solana = "0.2.0"
 # Database — default-features=false excludes mysql/sqlite drivers (postgres-only)
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "tls-native-tls", "postgres", "uuid", "macros"] }
 # Redis
@@ -62,3 +62,6 @@ thiserror = "1"
 proptest   = "1"
 tokio-test = "0.4"
 mockall    = "0.13"
+
+[profile.release]
+overflow-checks = true

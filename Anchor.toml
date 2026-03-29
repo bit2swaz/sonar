@@ -1,0 +1,26 @@
+[programs.localnet]
+sonar = "5B1rXQ71oEWUPc3AemCBTQtb5pmGAnX1jbGvZKcgBy84"
+
+[programs.devnet]
+sonar = "5B1rXQ71oEWUPc3AemCBTQtb5pmGAnX1jbGvZKcgBy84"
+
+[registry]
+url = "https://api.apr.dev"
+
+[provider]
+cluster = "Localnet"
+wallet = "~/.config/solana/id.json"
+
+[scripts]
+test = "TS_NODE_PROJECT=./tsconfig.json node -r ts-node/register/transpile-only ./program/tests/sonar.ts"
+
+[workspace]
+members = ["program"]
+
+[toolchain]
+anchor_version = "0.32.1"
+solana_version  = "3.0.13"
+package_manager = "npm"
+
+[test]
+startup_wait = 15000

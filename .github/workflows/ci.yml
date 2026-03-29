@@ -10,7 +10,7 @@ env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
   SOLANA_RPC_URL: "https://api.devnet.solana.com"
-  SONAR_PROGRAM_ID: "Sonar111111111111111111111111111111111111111"
+  SONAR_PROGRAM_ID: "5B1rXQ71oEWUPc3AemCBTQtb5pmGAnX1jbGvZKcgBy84"
   PRIVATE_KEY: "0x0000000000000000000000000000000000000000000000000000000000000000"
 
 jobs:
@@ -71,3 +71,30 @@ jobs:
 
       - name: Run cargo audit
         run: cargo audit
+
+      - name: Install cargo-deny
+        uses: actions/cache@v4
+        id: cache-cargo-deny
+        with:
+          path: ~/.cargo/bin/cargo-deny
+          key: ${{ runner.os }}-cargo-deny-0.16
+
+      - name: Build cargo-deny if not cached
+        if: steps.cache-cargo-deny.outputs.cache-hit != 'true'
+        run: cargo install cargo-deny --locked
+
+      - name: Run cargo deny
+        run: cargo deny check
+
+      - name: Install Solana CLI
+        run: |
+          sh -c "$(curl -sSfL https://release.anza.xyz/v3.0.13/install)"
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> $GITHUB_PATH
+
+      - name: Install Anchor CLI
+        run: cargo install anchor-cli --version 0.32.1 --locked
+
+      - name: Build Anchor program
+        run: |
+          npm install
+          anchor build

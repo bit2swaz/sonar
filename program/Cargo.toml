@@ -2,15 +2,26 @@
 name = "sonar-program"
 version = "0.1.0"
 edition = "2021"
+license = "MIT"
 
 [lib]
-crate-type = ["lib"]
+crate-type = ["cdylib", "lib"]
+name = "sonar_program"
 
 [features]
-default       = []
-no-entrypoint = []
-test-bpf      = []
+default        = []
+no-entrypoint  = []
+test-sbf       = []
+idl-build      = ["anchor-lang/idl-build"]
+# Anchor internal cfg flags emitted by #[program] and #[derive(Accounts)] macros.
+# Declaring them here prevents rustc from emitting unexpected_cfgs warnings.
+cpi            = []
+custom-heap    = []
+custom-panic   = []
+anchor-debug   = []
+no-idl         = []
+no-log-ix-name = []
 
 [dependencies]
-anyhow = { workspace = true }
-# anchor-lang and solana-program added in Phase 2.1
+anchor-lang    = { workspace = true }
+anyhow         = { workspace = true }

@@ -317,7 +317,8 @@ pub fn compute_historical_avg(ctx: &Context, params: HistoricalAvg) -> Result<u6
 > ✅ Phase 0 (ROADMAP mini-phases 0.1–0.2) — CI, linting, secret scanning, dependency pinning  
 > ✅ Phase 1 (ROADMAP mini-phases 1.1–1.4) — workspace scaffold, shared types (34 tests), config, observability  
 > ✅ Phase 2 (ROADMAP mini-phases 2.1–2.3) — Anchor program implemented and covered by a 17-test TypeScript integration suite against a local validator, including Groth16 callback verification, refund paths, callback CPI, and edge cases  
-> ⏭️ Next: Phase 3.1 — off-chain prover bring-up
+> ✅ Phase 3.1 (ROADMAP mini-phase 3.1) — SP1 prover smoke test implemented in `crates/prover`, including a vendored Fibonacci guest ELF, CI-safe mock proving, Groth16 wrapping, and end-to-end prover tests  
+> ⏭️ Next: Phase 3.2 — prover service binary and queue integration
 
 1. **Phase 0 – Foundation (Closed prototype)**  
    - Set up Rust toolchains, SP1, and groth16‑solana.  

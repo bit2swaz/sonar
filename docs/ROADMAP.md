@@ -944,10 +944,18 @@ Write the complete test file. All tests must pass.
 
 ## Mini‑Phase 3.1 — SP1 Setup and Simple Program
 
+**Status: ✅ Complete**
+
 **Definition of done:**
 - SP1 SDK is correctly configured in the prover crate
 - A trivial SP1 program (e.g., `fibonacci`) compiles and generates a proof
 - `cargo test -p sonar-prover` passes with a test that runs SP1 and verifies the proof
+
+**Implementation notes:**
+- `crates/prover` now uses the SP1 SDK blocking API with a CI-safe mock path.
+- `programs/fibonacci` contains the guest source plus a vendored ELF used by tests and local development.
+- CI installs `protobuf-compiler` before `cargo clippy --all-features` because SP1's dependency graph builds `sp1-prover-types`, which requires `protoc`.
+- The prover tests cover SP1 execution, Groth16 wrapping, and the public `prove` API.
 
 ---
 
@@ -1606,7 +1614,7 @@ Write all files completely. Make the grant applications compelling.
 Phase 0  — Project Hygiene        [x] 0.1 [x] 0.2
 Phase 1  — Foundation             [x] 1.1 [x] 1.2 [x] 1.3 [x] 1.4
 Phase 2  — Solana Program         [x] 2.1 [x] 2.2 [x] 2.3
-Phase 3  — Off‑Chain Prover       [ ] 3.1 [ ] 3.2
+Phase 3  — Off‑Chain Prover       [x] 3.1 [ ] 3.2
 Phase 4  — State Indexer          [ ] 4.1 [ ] 4.2
 Phase 5  — Coordinator & Queue    [ ] 5.1
 Phase 6  — End‑to‑End MVP         [ ] 6.1

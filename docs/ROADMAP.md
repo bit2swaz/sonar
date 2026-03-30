@@ -1065,9 +1065,16 @@ All tests must pass.
 
 ## Mini‑Phase 4.1 — Geyser Plugin Skeleton
 
+**Status: ✅ Complete**
+
 **Definition of done:**
 - Geyser plugin compiles and logs account updates to console
 - `cargo test -p sonar-indexer` passes (unit tests for plugin logic)
+
+**Implementation notes:**
+- `crates/indexer` now exposes a loadable `cdylib` Geyser plugin using an Agave-compatible Geyser interface crate with the current Solana validator plugin contract (`_create_plugin`, `on_load`, `update_account`).
+- `crates/indexer/src/geyser_plugin.rs` parses JSON config in `on_load`, logs account and slot updates, and includes unit tests for config parsing and dummy account notifications.
+- `crates/indexer/src/lib.rs` now exports the `_create_plugin` entrypoint required by the validator runtime.
 
 ---
 
@@ -1623,7 +1630,7 @@ Phase 0  — Project Hygiene        [x] 0.1 [x] 0.2
 Phase 1  — Foundation             [x] 1.1 [x] 1.2 [x] 1.3 [x] 1.4
 Phase 2  — Solana Program         [x] 2.1 [x] 2.2 [x] 2.3
 Phase 3  — Off‑Chain Prover       [x] 3.1 [x] 3.2
-Phase 4  — State Indexer          [ ] 4.1 [ ] 4.2
+Phase 4  — State Indexer          [x] 4.1 [ ] 4.2
 Phase 5  — Coordinator & Queue    [ ] 5.1
 Phase 6  — End‑to‑End MVP         [ ] 6.1
 Phase 7  — Testing & Hardening    [ ] 7.1 [ ] 7.2

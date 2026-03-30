@@ -51,7 +51,7 @@ anchor-lang    = "0.32.1"
 sp1-sdk        = "6.0.2"
 groth16-solana = "0.2.0"
 # Database — default-features=false excludes mysql/sqlite drivers (postgres-only)
-sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "tls-native-tls", "postgres", "uuid", "macros"] }
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "tls-native-tls", "postgres", "uuid"] }
 # Redis
 redis = { version = "0.24", features = ["tokio-comp"] }
 # Serialization

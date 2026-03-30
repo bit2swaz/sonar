@@ -1,5 +1,8 @@
 [advisories]
 ignore = [
+    # sqlx 0.8 retains an unused mysql advisory path in Cargo.lock even though the workspace is postgres-only.
+    # No fixed rsa upgrade is available upstream yet.
+    "RUSTSEC-2023-0071",
     "RUSTSEC-2021-0139",
     "RUSTSEC-2021-0145",
     "RUSTSEC-2022-0093",

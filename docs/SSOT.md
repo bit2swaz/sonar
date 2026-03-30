@@ -320,7 +320,8 @@ pub fn compute_historical_avg(ctx: &Context, params: HistoricalAvg) -> Result<u6
 > ✅ Phase 3.1 (ROADMAP mini-phase 3.1) — SP1 prover smoke test implemented in `crates/prover`, including a vendored Fibonacci guest ELF, CI-safe mock proving, Groth16 wrapping, and end-to-end prover tests  
 > ✅ Phase 3.2 (ROADMAP mini-phase 3.2) — prover service implemented with a Redis-backed worker loop, registry-based ELF resolution, bounded concurrency, graceful shutdown, and mock-queue integration tests  
 > ✅ Phase 4.1 (ROADMAP mini-phase 4.1) — Geyser plugin skeleton implemented as a loadable `cdylib`, with JSON config parsing, account-update logging, and unit tests for the plugin core  
-> ⏭️ Next: Phase 4.2 — PostgreSQL integration and account history
+> ✅ Phase 4.2 (ROADMAP mini-phase 4.2) — PostgreSQL-backed account history implemented with embedded SQLx migrations, batched account persistence, snapshot/history queries, and Docker-backed PostgreSQL tests  
+> ⏭️ Next: Phase 5.1 — Event listener and job dispatcher
 
 1. **Phase 0 – Foundation (Closed prototype)**  
    - Set up Rust toolchains, SP1, and groth16‑solana.  

@@ -1107,11 +1107,18 @@ Write the complete code.
 
 ## Mini‑Phase 4.2 — PostgreSQL Integration and Account History
 
+**Status: ✅ Complete**
+
 **Definition of done:**
 - Plugin writes account changes to PostgreSQL (using SQLx)
 - Schema created automatically on first run
 - Historical queries return correct account state at any slot
 - Tests with a local PostgreSQL instance
+
+**Implementation notes:**
+- `crates/indexer/src/db.rs` now owns the PostgreSQL integration: embedded SQLx migrations, batched `account_history` inserts, slot metadata upserts, and historical/snapshot query helpers.
+- `crates/indexer/src/geyser_plugin.rs` now opens a PostgreSQL pool in `on_load`, runs migrations automatically, buffers account updates into batches, and persists both account and slot notifications.
+- The indexer tests now exercise real PostgreSQL behavior using disposable Docker-backed Postgres instances, keeping `cargo test` self-contained for CI and local validation.
 
 ---
 

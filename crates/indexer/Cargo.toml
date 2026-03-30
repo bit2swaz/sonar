@@ -13,6 +13,7 @@ clone-agave-geyser-plugin-interface = { workspace = true }
 solana-sdk = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+sqlx = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 log = { workspace = true }

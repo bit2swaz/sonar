@@ -34,10 +34,10 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     // ── Config ────────────────────────────────────────────────────────────
-    let config_path = std::env::var("SONAR_CONFIG_PATH")
-        .unwrap_or_else(|_| "config/default.toml".to_string());
-    let cfg = Config::load(&config_path)
-        .with_context(|| format!("load config from {config_path}"))?;
+    let config_path =
+        std::env::var("SONAR_CONFIG_PATH").unwrap_or_else(|_| "config/default.toml".to_string());
+    let cfg =
+        Config::load(&config_path).with_context(|| format!("load config from {config_path}"))?;
 
     info!("Config loaded from {config_path}");
 
@@ -46,20 +46,14 @@ async fn main() -> anyhow::Result<()> {
         Ok(path) => {
             let json = std::fs::read_to_string(&path)
                 .with_context(|| format!("read keypair file: {path}"))?;
-            let bytes: Vec<u8> = serde_json::from_str(&json)
-                .context("deserialise keypair JSON")?;
-            Arc::new(
-                Keypair::try_from(bytes.as_slice())
-                    .context("construct Keypair from bytes")?,
-            )
-        }
+            let bytes: Vec<u8> = serde_json::from_str(&json).context("deserialise keypair JSON")?;
+            Arc::new(Keypair::try_from(bytes.as_slice()).context("construct Keypair from bytes")?)
+        },
         Err(_) => {
             let kp = Keypair::new();
-            info!(
-                "No SONAR_COORDINATOR_KEYPAIR_PATH — using ephemeral keypair (dev only)"
-            );
+            info!("No SONAR_COORDINATOR_KEYPAIR_PATH — using ephemeral keypair (dev only)");
             Arc::new(kp)
-        }
+        },
     };
 
     // ── Shutdown channel ──────────────────────────────────────────────────
@@ -87,9 +81,8 @@ async fn main() -> anyhow::Result<()> {
         max_retries: 3,
     };
     let callback_rx = shutdown_rx.clone();
-    let callback_handle = tokio::spawn(async move {
-        run_callback_worker(callback_cfg, callback_rx).await
-    });
+    let callback_handle =
+        tokio::spawn(async move { run_callback_worker(callback_cfg, callback_rx).await });
 
     info!("Coordinator running — press Ctrl+C to stop");
 

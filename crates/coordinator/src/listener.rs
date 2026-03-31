@@ -24,7 +24,7 @@ use solana_client::{
 use solana_sdk::{commitment_config::CommitmentConfig, pubkey::Pubkey};
 use tracing::{debug, error, info, warn};
 
-use sonar_common::types::{Pubkey as CommonPubkey, ProverJob};
+use sonar_common::types::{ProverJob, Pubkey as CommonPubkey};
 
 use crate::dispatcher;
 
@@ -209,10 +209,7 @@ pub async fn run_listener(
 ) -> anyhow::Result<()> {
     let program_id = Pubkey::from_str(PROGRAM_ID_STR).expect("valid program ID");
 
-    let rpc = RpcClient::new_with_commitment(
-        config.rpc_url.clone(),
-        CommitmentConfig::confirmed(),
-    );
+    let rpc = RpcClient::new_with_commitment(config.rpc_url.clone(), CommitmentConfig::confirmed());
 
     let redis_client =
         redis::Client::open(config.redis_url.as_str()).context("redis client open")?;
@@ -224,11 +221,11 @@ pub async fn run_listener(
     // Track dispatched request IDs to avoid double-processing.
     let seen: Arc<Mutex<HashSet<[u8; 32]>>> = Arc::new(Mutex::new(HashSet::new()));
 
-    let pubsub =
-        PubsubClient::new(&config.ws_url).await.context("pubsub connect")?;
+    let pubsub = PubsubClient::new(&config.ws_url)
+        .await
+        .context("pubsub connect")?;
 
-    let filter =
-        RpcTransactionLogsFilter::Mentions(vec![PROGRAM_ID_STR.to_string()]);
+    let filter = RpcTransactionLogsFilter::Mentions(vec![PROGRAM_ID_STR.to_string()]);
     let log_cfg = RpcTransactionLogsConfig {
         commitment: Some(CommitmentConfig::confirmed()),
     };
@@ -306,16 +303,14 @@ async fn handle_log_event(
     debug!("Request detected: sig={}", &logs_resp.signature);
 
     // Derive and fetch the RequestMetadata PDA.
-    let (pda, _bump) =
-        Pubkey::find_program_address(&[b"request", &request_id], program_id);
+    let (pda, _bump) = Pubkey::find_program_address(&[b"request", &request_id], program_id);
 
     let account_data = rpc
         .get_account_data(&pda)
         .await
         .context("get_account_data for RequestMetadata")?;
 
-    let meta = decode_request_metadata(&account_data)
-        .context("decode RequestMetadata account")?;
+    let meta = decode_request_metadata(&account_data).context("decode RequestMetadata account")?;
 
     // Only dispatch Pending requests.
     if meta.status != 0 {
@@ -326,10 +321,7 @@ async fn handle_log_event(
     let job = build_prover_job(&meta);
     dispatcher::push_job(redis_conn, jobs_queue, &job).await?;
 
-    info!(
-        "Dispatched job for request {}",
-        hex_encode(&request_id)
-    );
+    info!("Dispatched job for request {}", hex_encode(&request_id));
     Ok(())
 }
 
@@ -486,4 +478,3 @@ mod tests {
         assert!(job.inputs.is_empty(), "Phase 5.1: inputs are empty");
     }
 }
-

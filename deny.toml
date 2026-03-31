@@ -18,7 +18,8 @@ exceptions = [
     { name = "dynasm", allow = ["MPL-2.0"] },
     { name = "dynasmrt", allow = ["MPL-2.0"] },
     { name = "option-ext", allow = ["MPL-2.0"] },
-    { name = "webpki-roots", allow = ["CDLA-Permissive-2.0"] },
+    { name = "webpki-roots", allow = ["MPL-2.0", "CDLA-Permissive-2.0"] },
+    { name = "webpki-root-certs", allow = ["CDLA-Permissive-2.0"] },
     { name = "halo2", allow = ["LicenseRef-Bootstrap-1.0"] },
 ]
 

@@ -50,10 +50,9 @@ pub async fn pop_response<C: AsyncCommands>(
     match result {
         None => Ok(None),
         Some((_key, payload)) => {
-            let resp =
-                serde_json::from_str(&payload).context("deserialise ProverResponse")?;
+            let resp = serde_json::from_str(&payload).context("deserialise ProverResponse")?;
             Ok(Some(resp))
-        }
+        },
     }
 }
 
@@ -117,4 +116,3 @@ mod tests {
         assert!(decoded.inputs.is_empty());
     }
 }
-

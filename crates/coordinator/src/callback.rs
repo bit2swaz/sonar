@@ -45,11 +45,7 @@ pub fn callback_discriminator() -> [u8; 8] {
 
 /// Encode `CallbackParams { proof, public_inputs, result }` in Anchor/borsh
 /// wire format (length-prefixed vectors, all lengths as `u32 LE`).
-pub fn encode_callback_params(
-    proof: &[u8],
-    public_inputs: &[Vec<u8>],
-    result: &[u8],
-) -> Vec<u8> {
+pub fn encode_callback_params(proof: &[u8], public_inputs: &[Vec<u8>], result: &[u8]) -> Vec<u8> {
     let mut buf = Vec::new();
 
     // proof: Vec<u8>
@@ -152,16 +148,11 @@ pub async fn run_callback_worker(
     config: CallbackConfig,
     shutdown: tokio::sync::watch::Receiver<bool>,
 ) -> anyhow::Result<()> {
-    let program_id =
-        Pubkey::from_str(&config.program_id_str).context("parse program_id")?;
+    let program_id = Pubkey::from_str(&config.program_id_str).context("parse program_id")?;
 
-    let rpc = RpcClient::new_with_commitment(
-        config.rpc_url.clone(),
-        CommitmentConfig::confirmed(),
-    );
+    let rpc = RpcClient::new_with_commitment(config.rpc_url.clone(), CommitmentConfig::confirmed());
 
-    let redis_client =
-        redis::Client::open(config.redis_url.as_str()).context("redis client")?;
+    let redis_client = redis::Client::open(config.redis_url.as_str()).context("redis client")?;
     let mut redis_conn = redis_client
         .get_multiplexed_async_connection()
         .await
@@ -188,10 +179,13 @@ pub async fn run_callback_worker(
             Err(e) => {
                 warn!("pop_response error: {e:#}");
                 continue;
-            }
+            },
         };
 
-        info!("Processing response for request {:?}", hex_encode(&response.request_id));
+        info!(
+            "Processing response for request {:?}",
+            hex_encode(&response.request_id)
+        );
 
         if let Err(e) = process_response(
             &rpc,
@@ -219,18 +213,16 @@ async fn process_response(
     response: &ProverResponse,
 ) -> anyhow::Result<()> {
     // Derive request metadata PDA.
-    let (pda, _) = Pubkey::find_program_address(
-        &[b"request", response.request_id.as_ref()],
-        program_id,
-    );
+    let (pda, _) =
+        Pubkey::find_program_address(&[b"request", response.request_id.as_ref()], program_id);
 
     // Fetch and decode account to get callback_program.
     let account_data = rpc
         .get_account_data(&pda)
         .await
         .context("fetch RequestMetadata")?;
-    let meta = listener::decode_request_metadata(&account_data)
-        .context("decode RequestMetadata")?;
+    let meta =
+        listener::decode_request_metadata(&account_data).context("decode RequestMetadata")?;
 
     let callback_program = Pubkey::new_from_array(meta.callback_program);
 
@@ -263,13 +255,13 @@ async fn process_response(
             Ok(sig) => {
                 info!("Callback confirmed: {sig}");
                 return Ok(());
-            }
+            },
             Err(e) if attempt < max_retries => {
                 warn!("Callback attempt {attempt} failed: {e:#} — retrying");
-            }
+            },
             Err(e) => {
                 return Err(e).context("send_and_confirm_transaction");
-            }
+            },
         }
     }
 
@@ -329,8 +321,7 @@ mod tests {
         cursor += plen;
 
         // public_inputs outer length
-        let outer_len =
-            u32::from_le_bytes(enc[cursor..cursor + 4].try_into().unwrap()) as usize;
+        let outer_len = u32::from_le_bytes(enc[cursor..cursor + 4].try_into().unwrap()) as usize;
         cursor += 4;
         assert_eq!(outer_len, 2);
 
@@ -411,4 +402,3 @@ mod tests {
         assert_eq!(res_pda, expected_res);
     }
 }
-

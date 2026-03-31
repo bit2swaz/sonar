@@ -30,15 +30,20 @@ name = "sonar-prover"
 path = "bin/prover.rs"
 
 [dependencies]
-anyhow = { workspace = true }
-tokio  = { workspace = true }
-tracing = { workspace = true }
-sonar-common = { workspace = true }
-sonar-prover = { workspace = true }
+anyhow             = { workspace = true }
+tokio              = { workspace = true }
+tracing            = { workspace = true }
+tracing-subscriber = { workspace = true }
+serde_json         = { workspace = true }
+solana-sdk         = { workspace = true }
+sonar-common       = { workspace = true }
+sonar-prover       = { workspace = true }
+sonar-coordinator  = { path = "crates/coordinator" }
 
 [workspace.dependencies]
-sonar-common = { path = "crates/common" }
-sonar-prover = { path = "crates/prover" }
+sonar-common       = { path = "crates/common" }
+sonar-coordinator  = { path = "crates/coordinator" }
+sonar-prover       = { path = "crates/prover" }
 # Async runtime
 tokio = { version = "1", features = ["full"] }
 # Solana

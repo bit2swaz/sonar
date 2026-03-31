@@ -74,6 +74,15 @@ pub mod sonar {
         );
         transfer(transfer_ctx, params.fee)?;
 
+        // Emit structured log so the off-chain coordinator can detect new requests.
+        // Format: "sonar:request:<64-char lowercase hex request_id>"
+        let hex_id: String = params
+            .request_id
+            .iter()
+            .map(|b| format!("{:02x}", b))
+            .collect();
+        msg!("sonar:request:{}", hex_id);
+
         Ok(())
     }
 

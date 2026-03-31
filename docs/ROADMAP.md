@@ -1638,7 +1638,7 @@ Phase 1  — Foundation             [x] 1.1 [x] 1.2 [x] 1.3 [x] 1.4
 Phase 2  — Solana Program         [x] 2.1 [x] 2.2 [x] 2.3
 Phase 3  — Off‑Chain Prover       [x] 3.1 [x] 3.2
 Phase 4  — State Indexer          [x] 4.1 [x] 4.2
-Phase 5  — Coordinator & Queue    [ ] 5.1
+Phase 5  — Coordinator & Queue    [x] 5.1
 Phase 6  — End‑to‑End MVP         [ ] 6.1
 Phase 7  — Testing & Hardening    [ ] 7.1 [ ] 7.2
 Phase 8  — Performance Optimisation [ ] 8.1

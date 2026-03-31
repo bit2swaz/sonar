@@ -321,7 +321,8 @@ pub fn compute_historical_avg(ctx: &Context, params: HistoricalAvg) -> Result<u6
 > ✅ Phase 3.2 (ROADMAP mini-phase 3.2) — prover service implemented with a Redis-backed worker loop, registry-based ELF resolution, bounded concurrency, graceful shutdown, and mock-queue integration tests  
 > ✅ Phase 4.1 (ROADMAP mini-phase 4.1) — Geyser plugin skeleton implemented as a loadable `cdylib`, with JSON config parsing, account-update logging, and unit tests for the plugin core  
 > ✅ Phase 4.2 (ROADMAP mini-phase 4.2) — PostgreSQL-backed account history implemented with embedded SQLx migrations, batched account persistence, snapshot/history queries, and Docker-backed PostgreSQL tests  
-> ⏭️ Next: Phase 5.1 — Event listener and job dispatcher
+> ✅ Phase 5.1 (ROADMAP mini-phase 5.1) — Coordinator event listener and job dispatcher implemented: WebSocket log subscription (`sonar:request:<hex>` detection), RequestMetadata account decode, ProverJob dispatch to Redis `sonar:jobs`, callback worker (blpop `sonar:responses`, builds and submits Anchor `callback` instruction), 23 unit tests, full coordinator binary with graceful shutdown  
+> ⏭️ Next: Phase 6.1 — Historical average template
 
 1. **Phase 0 – Foundation (Closed prototype)**  
    - Set up Rust toolchains, SP1, and groth16‑solana.  

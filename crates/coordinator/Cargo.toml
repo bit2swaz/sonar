@@ -8,4 +8,8 @@ sonar-common  = { path = "../common" }
 tokio         = { workspace = true }
 redis         = { workspace = true }
 anyhow        = { workspace = true }
-# solana-client added in Phase 5.1
+tracing       = { workspace = true }
+serde_json    = { workspace = true }
+solana-client = { workspace = true }
+solana-sdk    = { workspace = true }
+futures-util  = "0.3"

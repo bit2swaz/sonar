@@ -245,7 +245,7 @@ async fn process_response(
             .context("get_latest_blockhash")?;
 
         let tx = Transaction::new_signed_with_payer(
-            &[ix.clone()],
+            std::slice::from_ref(&ix),
             Some(&keypair.pubkey()),
             &[keypair],
             blockhash,

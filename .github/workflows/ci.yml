@@ -117,14 +117,26 @@ jobs:
         run: |
           # Platform-tools v1.51 (default for Solana 3.0.13) ships Cargo 1.84,
           # which cannot parse edition2024 manifests from modern crates such as
-          # proc-macro-crate ≥ 3.x → toml_edit 0.25+ → toml_parser 1.1.
-          # This PATH-priority shim transparently injects --tools-version v1.53
-          # (Cargo 1.89) into every cargo-build-sbf call — anchor build, anchor
-          # test, scripts/build-program.sh — without modifying those callers.
+          # proc-macro-crate >= 3.x, toml_edit 0.25+, and toml_parser 1.1.
+          # The shim injects --tools-version v1.53 (Cargo 1.89) into every
+          # cargo-build-sbf invocation.
+          #
+          # Cargo's subcommand plugin protocol: when a caller runs
+          #   cargo build-sbf [args]
+          # Cargo finds this binary and invokes it as:
+          #   cargo-build-sbf build-sbf [args]
+          # passing the subcommand name as the first positional argument.
+          # The real cargo-build-sbf does not accept that positional argument,
+          # so the shim must strip it before forwarding.
           mkdir -p "$HOME/.local/bin"
-          REAL="$HOME/.local/share/solana/install/active_release/bin/cargo-build-sbf"
-          printf '#!/usr/bin/env bash\nexec "%s" --tools-version v1.53 "$@"\n' "$REAL" \
-            > "$HOME/.local/bin/cargo-build-sbf"
+          {
+            echo '#!/usr/bin/env bash'
+            echo 'REAL="$HOME/.local/share/solana/install/active_release/bin/cargo-build-sbf"'
+            echo 'args=("$@")'
+            echo '# Strip the Cargo plugin-protocol prefix ("build-sbf") if present.'
+            echo '[[ "${args[0]:-}" == "build-sbf" ]] && args=("${args[@]:1}")'
+            echo 'exec "$REAL" --tools-version v1.53 "${args[@]}"'
+          } > "$HOME/.local/bin/cargo-build-sbf"
           chmod +x "$HOME/.local/bin/cargo-build-sbf"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 

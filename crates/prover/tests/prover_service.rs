@@ -133,6 +133,7 @@ impl JobProcessor for MockProcessor {
             request_id: job.request_id,
             result: job.inputs.clone(),
             proof: vec![1, 2, 3, 4],
+            public_inputs: vec![job.inputs.clone()],
             gas_used: 4,
         })
     }

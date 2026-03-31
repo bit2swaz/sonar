@@ -5,7 +5,15 @@ pub const DEMO_COMPUTATION_ID: [u8; 32] = [
     251, 9, 53, 2, 35, 72, 231, 68, 94, 197, 56,
 ];
 
+pub const HISTORICAL_AVG_COMPUTATION_ID: [u8; 32] = [
+    180, 134, 237, 198, 23, 219, 85, 143, 84, 245, 61, 62, 222, 122, 82, 179, 3, 201, 204, 111,
+    144, 62, 32, 159, 91, 227, 160, 78, 252, 195, 98, 100,
+];
+
 pub const DEMO_PUBLIC_INPUTS_LEN: usize = 9;
+pub const HISTORICAL_AVG_PUBLIC_INPUT_BYTES: usize = 8;
+
+pub const HISTORICAL_AVG_VERIFYING_KEY: Groth16Verifyingkey<'static> = DEMO_VERIFYING_KEY;
 
 pub const DEMO_VERIFYING_KEY: Groth16Verifyingkey<'static> = Groth16Verifyingkey {
     nr_pubinputs: 10,

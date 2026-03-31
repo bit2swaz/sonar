@@ -25,7 +25,7 @@ pub fn build_sp1_program(elf_path: &str) -> anyhow::Result<Vec<u8>> {
     fs::read(elf_path).with_context(|| format!("failed to load SP1 ELF from {elf_path}"))
 }
 
-pub fn run_sp1_program(elf: &[u8], inputs: &[u8]) -> anyhow::Result<(Vec<u8>, Vec<u8>)> {
+pub fn run_sp1_program(elf: &[u8], inputs: &[u8]) -> anyhow::Result<(Vec<u8>, Vec<u8>, Vec<u8>)> {
     let n = decode_fibonacci_input(inputs)?;
     configure_prover_environment();
 
@@ -67,10 +67,9 @@ pub fn run_sp1_program(elf: &[u8], inputs: &[u8]) -> anyhow::Result<(Vec<u8>, Ve
         groth16_proof: serialize_proof(&groth16_proof)?,
     };
 
-    Ok((
-        fibonacci_result(n).to_le_bytes().to_vec(),
-        bincode::serialize(&bundle)?,
-    ))
+    let result = fibonacci_result(n).to_le_bytes().to_vec();
+
+    Ok((result.clone(), bincode::serialize(&bundle)?, result))
 }
 
 /// Run the historical-average SP1 program.
@@ -78,7 +77,10 @@ pub fn run_sp1_program(elf: &[u8], inputs: &[u8]) -> anyhow::Result<(Vec<u8>, Ve
 /// `inputs` must be a bincode-encoded `Vec<u64>` (the lamport balances fetched
 /// from the indexer by the coordinator).  The returned result is the 8-byte
 /// little-endian average.
-pub fn run_historical_avg_program(elf: &[u8], inputs: &[u8]) -> anyhow::Result<(Vec<u8>, Vec<u8>)> {
+pub fn run_historical_avg_program(
+    elf: &[u8],
+    inputs: &[u8],
+) -> anyhow::Result<(Vec<u8>, Vec<u8>, Vec<u8>)> {
     let balances: Vec<u64> = bincode::deserialize(inputs)
         .context("failed to deserialize historical_avg inputs as Vec<u64>")?;
     configure_prover_environment();
@@ -130,7 +132,13 @@ pub fn run_historical_avg_program(elf: &[u8], inputs: &[u8]) -> anyhow::Result<(
 
     let result = compute_historical_avg_result(&balances);
 
-    Ok((result.to_le_bytes().to_vec(), bincode::serialize(&bundle)?))
+    let result_bytes = result.to_le_bytes().to_vec();
+
+    Ok((
+        result_bytes.clone(),
+        bincode::serialize(&bundle)?,
+        result_bytes,
+    ))
 }
 
 /// Compute the integer average of `balances` — mirrors the SP1 guest logic.

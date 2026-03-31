@@ -120,12 +120,13 @@ impl JobProcessor for Sp1JobProcessor {
             "processing prover job"
         );
 
-        let (proof, result) = prove(&job.computation_id, &job.inputs)?;
+        let (proof, result, public_inputs) = prove(&job.computation_id, &job.inputs)?;
         Ok(ProverResponse {
             request_id: job.request_id,
             result,
             gas_used: proof.len() as u64,
             proof,
+            public_inputs: vec![public_inputs],
         })
     }
 }

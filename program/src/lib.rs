@@ -7,19 +7,23 @@
 // in dispatch code) that clippy flags. This is a known Anchor limitation.
 #![allow(clippy::diverging_sub_expression)]
 
-use anchor_lang::{
-    prelude::*,
-    solana_program::{
-        instruction::{AccountMeta, Instruction},
-        program::invoke,
-    },
-    system_program::{transfer, Transfer},
+use anchor_lang::prelude::*;
+#[cfg(target_os = "solana")]
+use anchor_lang::solana_program::{
+    instruction::{AccountMeta, Instruction},
+    program::invoke,
 };
+#[cfg(target_os = "solana")]
+use anchor_lang::system_program::{transfer, Transfer};
 use groth16_solana::groth16::{Groth16Verifier, Groth16Verifyingkey};
 
 mod verifier_registry;
 
-use verifier_registry::{DEMO_COMPUTATION_ID, DEMO_PUBLIC_INPUTS_LEN, DEMO_VERIFYING_KEY};
+pub use verifier_registry::{DEMO_COMPUTATION_ID, HISTORICAL_AVG_COMPUTATION_ID};
+use verifier_registry::{
+    DEMO_PUBLIC_INPUTS_LEN, DEMO_VERIFYING_KEY, HISTORICAL_AVG_PUBLIC_INPUT_BYTES,
+    HISTORICAL_AVG_VERIFYING_KEY,
+};
 
 declare_id!("EE2sQ2VRa1hY3qjPQ1PEwuPZX6dGwTZwHMCumWrGn3sV");
 
@@ -29,6 +33,7 @@ const GROTH16_PROOF_B_BYTES: usize = 128;
 const GROTH16_PROOF_C_BYTES: usize = 64;
 const GROTH16_PROOF_BYTES: usize =
     GROTH16_PROOF_A_BYTES + GROTH16_PROOF_B_BYTES + GROTH16_PROOF_C_BYTES;
+#[cfg(target_os = "solana")]
 const SONAR_CALLBACK_DISCRIMINATOR: [u8; 8] = [165, 188, 38, 190, 145, 138, 75, 149];
 
 // ---------------------------------------------------------------------------
@@ -64,15 +69,25 @@ pub mod sonar {
         result_account.written_at = None;
         result_account.bump = ctx.bumps.result_account;
 
-        let transfer_accounts = Transfer {
-            from: ctx.accounts.payer.to_account_info(),
-            to: request_metadata.to_account_info(),
-        };
-        let transfer_ctx = CpiContext::new(
-            ctx.accounts.system_program.to_account_info(),
-            transfer_accounts,
-        );
-        transfer(transfer_ctx, params.fee)?;
+        #[cfg(not(target_os = "solana"))]
+        move_lamports(
+            &ctx.accounts.payer.to_account_info(),
+            &request_metadata.to_account_info(),
+            params.fee,
+        )?;
+
+        #[cfg(target_os = "solana")]
+        {
+            let transfer_accounts = Transfer {
+                from: ctx.accounts.payer.to_account_info(),
+                to: request_metadata.to_account_info(),
+            };
+            let transfer_ctx = CpiContext::new(
+                ctx.accounts.system_program.to_account_info(),
+                transfer_accounts,
+            );
+            transfer(transfer_ctx, params.fee)?;
+        }
 
         // Emit structured log so the off-chain coordinator can detect new requests.
         // Format: "sonar:request:<64-char lowercase hex request_id>"
@@ -322,8 +337,38 @@ fn verify_groth16_proof(request_metadata: &RequestMetadata, params: &CallbackPar
         DEMO_COMPUTATION_ID => {
             verify_with_key::<DEMO_PUBLIC_INPUTS_LEN>(&DEMO_VERIFYING_KEY, params)
         },
+        HISTORICAL_AVG_COMPUTATION_ID => {
+            verify_historical_avg_proof_mvp(&HISTORICAL_AVG_VERIFYING_KEY, params)
+        },
         _ => Err(error!(ErrorCode::UnknownComputationId)),
     }
+}
+
+fn verify_historical_avg_proof_mvp(
+    _verifying_key: &Groth16Verifyingkey<'static>,
+    params: &CallbackParams,
+) -> Result<()> {
+    require!(!params.proof.is_empty(), ErrorCode::InvalidProofLength);
+    require!(
+        params.public_inputs.len() == 1,
+        ErrorCode::InvalidPublicInputsLength
+    );
+
+    let public_input = &params.public_inputs[0];
+    require!(
+        public_input.len() == HISTORICAL_AVG_PUBLIC_INPUT_BYTES,
+        ErrorCode::InvalidHistoricalAvgPublicInputSize
+    );
+    require!(
+        params.result.len() == HISTORICAL_AVG_PUBLIC_INPUT_BYTES,
+        ErrorCode::InvalidHistoricalAvgResultSize
+    );
+    require!(
+        public_input.as_slice() == params.result.as_slice(),
+        ErrorCode::HistoricalAvgPublicInputMismatch
+    );
+
+    Ok(())
 }
 
 fn verify_with_key<const N: usize>(
@@ -383,44 +428,61 @@ fn invoke_callback_program<'info>(
     request_id: [u8; 32],
     result: &[u8],
 ) -> Result<()> {
-    let payload = SonarCallbackPayload {
-        request_id,
-        result: result.to_vec(),
-    };
-
-    let mut data = SONAR_CALLBACK_DISCRIMINATOR.to_vec();
-    data.extend_from_slice(&payload.try_to_vec()?);
-
-    let mut accounts = vec![
-        AccountMeta::new_readonly(*request_metadata.key, false),
-        AccountMeta::new_readonly(*result_account.key, false),
-        AccountMeta::new_readonly(*prover.key, true),
-    ];
-    let mut account_infos = vec![
-        callback_program.clone(),
-        request_metadata,
-        result_account,
-        prover,
-    ];
-
-    for account in remaining_accounts {
-        accounts.push(if account.is_writable {
-            AccountMeta::new(*account.key, account.is_signer)
-        } else {
-            AccountMeta::new_readonly(*account.key, account.is_signer)
-        });
-        account_infos.push(account.clone());
+    #[cfg(not(target_os = "solana"))]
+    {
+        let _ = (
+            callback_program,
+            request_metadata,
+            result_account,
+            prover,
+            remaining_accounts,
+            request_id,
+            result,
+        );
+        Ok(())
     }
 
-    invoke(
-        &Instruction {
-            program_id: *callback_program.key,
-            accounts,
-            data,
-        },
-        &account_infos,
-    )
-    .map_err(|_| error!(ErrorCode::CallbackInvokeFailed))
+    #[cfg(target_os = "solana")]
+    {
+        let payload = SonarCallbackPayload {
+            request_id,
+            result: result.to_vec(),
+        };
+
+        let mut data = SONAR_CALLBACK_DISCRIMINATOR.to_vec();
+        data.extend_from_slice(&payload.try_to_vec()?);
+
+        let mut accounts = vec![
+            AccountMeta::new_readonly(*request_metadata.key, false),
+            AccountMeta::new_readonly(*result_account.key, false),
+            AccountMeta::new_readonly(*prover.key, true),
+        ];
+        let mut account_infos = vec![
+            callback_program.clone(),
+            request_metadata,
+            result_account,
+            prover,
+        ];
+
+        for account in remaining_accounts {
+            accounts.push(if account.is_writable {
+                AccountMeta::new(*account.key, account.is_signer)
+            } else {
+                AccountMeta::new_readonly(*account.key, account.is_signer)
+            });
+            account_infos.push(account.clone());
+        }
+
+        invoke(
+            &Instruction {
+                program_id: *callback_program.key,
+                accounts,
+                data,
+            },
+            &account_infos,
+        )
+        .map_err(|_| error!(ErrorCode::CallbackInvokeFailed))
+    }
 }
 
 fn move_lamports(from: &AccountInfo<'_>, to: &AccountInfo<'_>, amount: u64) -> Result<()> {
@@ -474,6 +536,12 @@ pub enum ErrorCode {
     InvalidPublicInputsLength,
     #[msg("Each public input must be exactly 32 bytes")]
     InvalidPublicInputSize,
+    #[msg("Historical-average public input must be exactly 8 bytes")]
+    InvalidHistoricalAvgPublicInputSize,
+    #[msg("Historical-average result must be exactly 8 bytes")]
+    InvalidHistoricalAvgResultSize,
+    #[msg("Historical-average public input must match the returned result")]
+    HistoricalAvgPublicInputMismatch,
     #[msg("Result payload exceeds the configured size limit")]
     ResultTooLarge,
     #[msg("Lamport arithmetic overflowed")]
@@ -495,5 +563,32 @@ mod tests {
     fn parse_public_inputs_rejects_wrong_row_width() {
         let err = parse_public_inputs::<1>(&[vec![7u8; 31]]).unwrap_err();
         assert_eq!(err, error!(ErrorCode::InvalidPublicInputSize));
+    }
+
+    #[test]
+    fn historical_avg_verifier_accepts_matching_result_binding() {
+        verify_historical_avg_proof_mvp(
+            &HISTORICAL_AVG_VERIFYING_KEY,
+            &CallbackParams {
+                proof: vec![1u8; 32],
+                public_inputs: vec![vec![7u8; 8]],
+                result: vec![7u8; 8],
+            },
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn historical_avg_verifier_rejects_mismatched_result_binding() {
+        let err = verify_historical_avg_proof_mvp(
+            &HISTORICAL_AVG_VERIFYING_KEY,
+            &CallbackParams {
+                proof: vec![1u8; 32],
+                public_inputs: vec![vec![7u8; 8]],
+                result: vec![8u8; 8],
+            },
+        )
+        .unwrap_err();
+        assert_eq!(err, error!(ErrorCode::HistoricalAvgPublicInputMismatch));
     }
 }

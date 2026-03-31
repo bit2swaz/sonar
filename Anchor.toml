@@ -1,6 +1,7 @@
 [programs.localnet]
 sonar = "EE2sQ2VRa1hY3qjPQ1PEwuPZX6dGwTZwHMCumWrGn3sV"
 echo_callback = "3RBU9G6Mws9nS8bQPg2cVRbS2v7CgsjAvv2MwmTcmbyA"
+historical_avg_client = "4iFJKn91J7zvGbaXvezVGJkpYfmC3xJdY2Er7U616G96"
 
 [programs.devnet]
 sonar = "5B1rXQ71oEWUPc3AemCBTQtb5pmGAnX1jbGvZKcgBy84"
@@ -16,7 +17,7 @@ wallet = "~/.config/solana/id.json"
 test = "npx ts-mocha -p ./tsconfig.json -t 60000 --exit program/tests/**/*.ts"
 
 [workspace]
-members = ["program", "echo_callback"]
+members = ["program", "echo_callback", "programs/historical_avg_client"]
 
 [toolchain]
 anchor_version = "0.32.1"

@@ -82,6 +82,7 @@ mod tests {
             request_id: [1u8; 32],
             result: vec![42],
             proof: vec![0u8; 32],
+            public_inputs: vec![vec![42]],
             gas_used: 200_000,
         }
     }
@@ -104,6 +105,7 @@ mod tests {
         let decoded: ProverResponse = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(decoded.request_id, resp.request_id);
         assert_eq!(decoded.result, resp.result);
+        assert_eq!(decoded.public_inputs, resp.public_inputs);
         assert_eq!(decoded.gas_used, resp.gas_used);
     }
 

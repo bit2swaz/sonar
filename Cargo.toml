@@ -8,6 +8,7 @@ members = [
     "crates/sdk",
     "program",
     "echo_callback",
+    "programs/historical_avg_client",
 ]
 resolver = "2"
 
@@ -88,3 +89,10 @@ mockall    = "0.13"
 
 [profile.release]
 overflow-checks = true
+
+[dev-dependencies]
+anchor-lang = { workspace = true }
+bincode = { workspace = true }
+solana-program-test = "2.3.13"
+sonar-program = { path = "program" }
+historical-avg-client = { path = "programs/historical_avg_client" }

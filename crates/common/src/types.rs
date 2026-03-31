@@ -155,6 +155,7 @@ pub struct ProverResponse {
     pub request_id: [u8; 32],
     pub result: Vec<u8>,
     pub proof: Vec<u8>,
+    pub public_inputs: Vec<Vec<u8>>,
     /// Simulated compute-unit usage, used for metrics.
     pub gas_used: u64,
 }
@@ -372,6 +373,7 @@ mod tests {
             request_id: sample_id(),
             result: vec![55],
             proof: vec![0xBB; 32],
+            public_inputs: vec![vec![0x37; 8]],
             gas_used: 200_000,
         };
         let json = serde_json::to_string(&resp).unwrap();
@@ -379,6 +381,7 @@ mod tests {
         assert_eq!(resp.request_id, decoded.request_id);
         assert_eq!(resp.result, decoded.result);
         assert_eq!(resp.proof, decoded.proof);
+        assert_eq!(resp.public_inputs, decoded.public_inputs);
         assert_eq!(resp.gas_used, decoded.gas_used);
     }
 

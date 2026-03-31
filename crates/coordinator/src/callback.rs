@@ -226,14 +226,14 @@ async fn process_response(
 
     let callback_program = Pubkey::new_from_array(meta.callback_program);
 
-    // Build instruction (public_inputs placeholder for Phase 5.1).
+    // Build instruction with prover-provided public inputs.
     let (ix, _, _) = build_callback_instruction(
         *program_id,
         &response.request_id,
         keypair.pubkey(),
         callback_program,
         &response.proof,
-        &[], // TODO Phase 6.1: real public inputs
+        &response.public_inputs,
         &response.result,
     );
 

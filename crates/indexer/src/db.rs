@@ -227,6 +227,32 @@ pub async fn query_account_snapshot(
     row.map(AccountState::try_from).transpose()
 }
 
+/// Return the ordered list of lamport balances for `pubkey` in the inclusive
+/// slot range `[from_slot, to_slot]`.  Each row represents the balance at
+/// that particular write — multiple writes per slot are preserved in
+/// write_version order.
+pub async fn query_balances_in_range(
+    pool: &PgPool,
+    pubkey: &[u8; 32],
+    from_slot: u64,
+    to_slot: u64,
+) -> Result<Vec<u64>> {
+    let rows = sqlx::query_scalar::<_, i64>(
+        "SELECT lamports \
+         FROM account_history \
+         WHERE pubkey = $1 AND slot BETWEEN $2 AND $3 \
+         ORDER BY slot ASC, write_version ASC",
+    )
+    .bind(pubkey.to_vec())
+    .bind(to_i64("from_slot", from_slot)?)
+    .bind(to_i64("to_slot", to_slot)?)
+    .fetch_all(pool)
+    .await
+    .context("failed to query balances in range")?;
+
+    rows.into_iter().map(|v| to_u64("lamports", v)).collect()
+}
+
 impl TryFrom<AccountStateRow> for AccountState {
     type Error = anyhow::Error;
 

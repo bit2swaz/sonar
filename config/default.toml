@@ -16,11 +16,13 @@ helius_rpc_url = "${HELIUS_RPC_URL}"
 geyser_plugin_path = "/opt/sonar/libsonar_indexer.so"
 database_url       = "${DATABASE_URL}"
 concurrency        = 4
+http_port          = 8080
 
 [coordinator]
 redis_url                = "${REDIS_URL}"
 callback_timeout_seconds = 30
 max_concurrent_jobs      = 8
+indexer_url              = "http://localhost:8080"
 
 [prover]
 sp1_proving_key_path = "${SP1_PROVING_KEY}"

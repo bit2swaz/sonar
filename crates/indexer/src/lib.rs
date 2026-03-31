@@ -2,6 +2,7 @@
 
 pub mod db;
 pub mod geyser_plugin;
+pub mod server;
 
 pub use geyser_plugin::SonarGeyserPlugin;
 

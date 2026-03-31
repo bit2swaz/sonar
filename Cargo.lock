@@ -833,6 +833,8 @@ dependencies = [
  "http 1.4.0",
  "http-body",
  "http-body-util",
+ "hyper",
+ "hyper-util",
  "itoa",
  "matchit",
  "memchr",
@@ -841,10 +843,15 @@ dependencies = [
  "pin-project-lite",
  "rustversion",
  "serde",
+ "serde_json",
+ "serde_path_to_error",
+ "serde_urlencoded",
  "sync_wrapper",
+ "tokio",
  "tower 0.5.3",
  "tower-layer",
  "tower-service",
+ "tracing",
 ]
 
 [[package]]
@@ -865,6 +872,7 @@ dependencies = [
  "sync_wrapper",
  "tower-layer",
  "tower-service",
+ "tracing",
 ]
 
 [[package]]
@@ -7442,6 +7450,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde_path_to_error"
+version = "0.1.20"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "10a9ff822e371bb5403e391ecd83e182e0e77ba7f6fe0160b795797109d1b457"
+dependencies = [
+ "itoa",
+ "serde",
+ "serde_core",
+]
+
+[[package]]
 name = "serde_spanned"
 version = "0.6.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10141,6 +10160,7 @@ dependencies = [
  "solana-sdk",
  "sonar-common",
  "sonar-coordinator",
+ "sonar-indexer",
  "sonar-prover",
  "tokio",
  "tracing",
@@ -10167,8 +10187,11 @@ name = "sonar-coordinator"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bincode",
+ "bs58",
  "futures-util",
  "redis",
+ "reqwest",
  "serde_json",
  "solana-client",
  "solana-sdk",
@@ -10182,6 +10205,8 @@ name = "sonar-indexer"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "axum",
+ "bs58",
  "clone-agave-geyser-plugin-interface",
  "log",
  "serde",
@@ -10190,6 +10215,7 @@ dependencies = [
  "sonar-common",
  "sqlx",
  "tokio",
+ "tower 0.5.3",
  "tracing",
 ]
 
@@ -11565,6 +11591,7 @@ dependencies = [
  "tokio",
  "tower-layer",
  "tower-service",
+ "tracing",
 ]
 
 [[package]]

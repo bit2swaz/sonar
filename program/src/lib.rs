@@ -83,6 +83,12 @@ pub mod sonar {
             .collect();
         msg!("sonar:request:{}", hex_id);
 
+        // Emit serialised inputs so the coordinator can build the prover job
+        // without fetching the full transaction.
+        // Format: "sonar:inputs:<lowercase hex-encoded bytes>"
+        let hex_inputs: String = params.inputs.iter().map(|b| format!("{:02x}", b)).collect();
+        msg!("sonar:inputs:{}", hex_inputs);
+
         Ok(())
     }
 

@@ -54,6 +54,8 @@ pub struct IndexerConfig {
     pub geyser_plugin_path: String,
     pub database_url: String,
     pub concurrency: usize,
+    /// Port for the indexer's HTTP query server.
+    pub http_port: u16,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -61,6 +63,8 @@ pub struct CoordinatorConfig {
     pub redis_url: String,
     pub callback_timeout_seconds: u64,
     pub max_concurrent_jobs: usize,
+    /// Base URL of the indexer HTTP server (e.g. `http://localhost:8080`).
+    pub indexer_url: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -160,11 +164,13 @@ helius_rpc_url = "https://mainnet.helius-rpc.com"
 geyser_plugin_path = "/opt/sonar/libsonar_indexer.so"
 database_url       = "postgresql://postgres:password@localhost:5432/sonar"
 concurrency        = 4
+http_port          = 8080
 
 [coordinator]
-redis_url               = "redis://localhost:6379"
+redis_url                = "redis://localhost:6379"
 callback_timeout_seconds = 30
 max_concurrent_jobs      = 8
+indexer_url              = "http://localhost:8080"
 
 [prover]
 sp1_proving_key_path = "/opt/sonar/sp1.key"

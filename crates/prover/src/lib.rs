@@ -6,7 +6,8 @@ pub mod sp1_wrapper;
 use sonar_common::types::ComputationId;
 
 use crate::{
-    groth16_wrapper::wrap_stark_to_groth16, registry::resolve_computation,
+    groth16_wrapper::wrap_stark_to_groth16,
+    registry::{resolve_computation, HISTORICAL_AVG_ELF_PATH},
     sp1_wrapper::build_sp1_program,
 };
 
@@ -14,10 +15,20 @@ pub fn fibonacci_computation_id() -> anyhow::Result<ComputationId> {
     registry::fibonacci_computation_id()
 }
 
+pub fn historical_avg_computation_id() -> anyhow::Result<ComputationId> {
+    registry::historical_avg_computation_id()
+}
+
 pub fn prove(computation_id: &[u8; 32], inputs: &[u8]) -> anyhow::Result<(Vec<u8>, Vec<u8>)> {
     let computation = resolve_computation(computation_id)?;
     let elf = build_sp1_program(computation.elf_path)?;
-    let (result, stark_proof) = sp1_wrapper::run_sp1_program(&elf, inputs)?;
+
+    let (result, stark_proof) = if computation.elf_path == HISTORICAL_AVG_ELF_PATH {
+        sp1_wrapper::run_historical_avg_program(&elf, inputs)?
+    } else {
+        sp1_wrapper::run_sp1_program(&elf, inputs)?
+    };
+
     let proof = wrap_stark_to_groth16(&stark_proof, std::slice::from_ref(&result))?;
     Ok((proof, result))
 }
@@ -86,5 +97,32 @@ mod tests {
 
         assert_eq!(decode_result(result), 55);
         assert!(!proof.is_empty(), "end-to-end proof should not be empty");
+    }
+
+    // ---------- historical_avg helpers ----------
+
+    #[test]
+    fn test_compute_historical_avg_result_empty() {
+        assert_eq!(sp1_wrapper::compute_historical_avg_result(&[]), 0);
+    }
+
+    #[test]
+    fn test_compute_historical_avg_result_single() {
+        assert_eq!(sp1_wrapper::compute_historical_avg_result(&[42]), 42);
+    }
+
+    #[test]
+    fn test_compute_historical_avg_result_multiple() {
+        // [100, 200, 300] → sum=600, avg=200
+        assert_eq!(
+            sp1_wrapper::compute_historical_avg_result(&[100, 200, 300]),
+            200
+        );
+    }
+
+    #[test]
+    fn test_compute_historical_avg_result_truncates() {
+        // [1, 2] → sum=3, avg=1 (integer div)
+        assert_eq!(sp1_wrapper::compute_historical_avg_result(&[1, 2]), 1);
     }
 }

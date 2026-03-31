@@ -1,15 +1,19 @@
 //! Listener — subscribes to Sonar program logs and dispatches [`ProverJob`]s.
 //!
 //! When the on-chain `request` instruction succeeds the program emits
-//! `"sonar:request:<64-char hex request_id>"` via `msg!`.  This module:
+//! `"sonar:request:<64-char hex request_id>"` and
+//! `"sonar:inputs:<hex-encoded inputs>"` via `msg!`.  This module:
 //!
 //! 1. Subscribes to Solana WebSocket logs mentioning the Sonar program.
 //! 2. Detects the `sonar:request:` log pattern.
 //! 3. Derives the `RequestMetadata` PDA and fetches its account data.
 //! 4. Decodes the account, builds a [`ProverJob`], and pushes it to Redis.
 //!
-//! **Phase 5.1 note:** `ProverJob.inputs` is set to `Vec::new()`.  Phase 6.1
-//! will enrich jobs with real inputs fetched from the indexer.
+//! For **HistoricalAvg** requests the coordinator:
+//! - Parses the `sonar:inputs:` log to extract (pubkey, from_slot, to_slot).
+//! - Fetches lamport balances from the indexer HTTP API.
+//! - Encodes the balance list as `bincode::serialize(&Vec<u64>)` and stores it
+//!   in `ProverJob.inputs`.
 
 use std::collections::HashSet;
 use std::str::FromStr;
@@ -38,6 +42,12 @@ pub const PROGRAM_ID_STR: &str = "EE2sQ2VRa1hY3qjPQ1PEwuPZX6dGwTZwHMCumWrGn3sV";
 /// Prefix emitted by `msg!("sonar:request:{}", hex_id)` in the program.
 const LOG_REQUEST_PREFIX: &str = "Program log: sonar:request:";
 
+/// Prefix emitted by `msg!("sonar:inputs:{}", hex_inputs)` in the program.
+const LOG_INPUTS_PREFIX: &str = "Program log: sonar:inputs:";
+
+/// Byte length of historical-average inputs: pubkey[32] + from_slot[8] + to_slot[8].
+pub const HISTORICAL_AVG_INPUTS_LEN: usize = 48;
+
 // ---------------------------------------------------------------------------
 // On-chain account layout (manual borsh decode — no extra dep)
 // ---------------------------------------------------------------------------
@@ -58,6 +68,14 @@ pub struct OnChainRequestMetadata {
     pub bump: u8,
 }
 
+/// Decoded on-chain inputs for a HistoricalAvg request.
+#[derive(Debug, Clone)]
+pub struct HistoricalAvgInputs {
+    pub pubkey: [u8; 32],
+    pub from_slot: u64,
+    pub to_slot: u64,
+}
+
 // ---------------------------------------------------------------------------
 // Pure parsing helpers — all fully unit-testable
 // ---------------------------------------------------------------------------
@@ -71,6 +89,51 @@ pub fn parse_request_id_from_logs(logs: &[String]) -> Option<[u8; 32]> {
         }
     }
     None
+}
+
+/// Scan `logs` for a `"Program log: sonar:inputs:<hex>"` entry and return
+/// the decoded bytes, or `None` if not present.
+pub fn parse_inputs_from_logs(logs: &[String]) -> Option<Vec<u8>> {
+    for line in logs {
+        if let Some(hex) = line.strip_prefix(LOG_INPUTS_PREFIX) {
+            let hex = hex.trim();
+            if hex.len() % 2 != 0 {
+                return None;
+            }
+            let mut out = Vec::with_capacity(hex.len() / 2);
+            for chunk in hex.as_bytes().chunks_exact(2) {
+                let hi = hex_nibble(chunk[0])?;
+                let lo = hex_nibble(chunk[1])?;
+                out.push((hi << 4) | lo);
+            }
+            return Some(out);
+        }
+    }
+    None
+}
+
+/// Decode 48 raw input bytes into `(pubkey[32], from_slot, to_slot)`.
+pub fn decode_historical_avg_inputs(raw: &[u8]) -> Option<HistoricalAvgInputs> {
+    if raw.len() != HISTORICAL_AVG_INPUTS_LEN {
+        return None;
+    }
+    let pubkey: [u8; 32] = raw[..32].try_into().ok()?;
+    let from_slot = u64::from_le_bytes(raw[32..40].try_into().ok()?);
+    let to_slot = u64::from_le_bytes(raw[40..48].try_into().ok()?);
+    Some(HistoricalAvgInputs {
+        pubkey,
+        from_slot,
+        to_slot,
+    })
+}
+
+/// Encode HistoricalAvg request inputs as 48 raw bytes.
+pub fn encode_historical_avg_inputs(pubkey: &[u8; 32], from_slot: u64, to_slot: u64) -> Vec<u8> {
+    let mut out = Vec::with_capacity(HISTORICAL_AVG_INPUTS_LEN);
+    out.extend_from_slice(pubkey);
+    out.extend_from_slice(&from_slot.to_le_bytes());
+    out.extend_from_slice(&to_slot.to_le_bytes());
+    out
 }
 
 /// Decode a 64-character lower-hex string into 32 bytes.
@@ -169,20 +232,46 @@ pub fn decode_request_metadata(data: &[u8]) -> Option<OnChainRequestMetadata> {
 // Job building
 // ---------------------------------------------------------------------------
 
-/// Build a [`ProverJob`] from a decoded `RequestMetadata`.
-///
-/// `inputs` is left empty for Phase 5.1; Phase 6.1 will populate it from the
-/// indexer before dispatching.
-pub fn build_prover_job(meta: &OnChainRequestMetadata) -> ProverJob {
+/// Build a [`ProverJob`] from a decoded `RequestMetadata` and pre-fetched
+/// prover inputs.
+pub fn build_prover_job(meta: &OnChainRequestMetadata, inputs: Vec<u8>) -> ProverJob {
     ProverJob {
         request_id: meta.request_id,
         computation_id: meta.computation_id,
-        inputs: Vec::new(), // TODO Phase 6.1: fetch from indexer
+        inputs,
         deadline: meta.deadline,
         fee: meta.fee,
         callback_program: CommonPubkey::new(meta.callback_program),
         result_account: CommonPubkey::new(meta.result_account),
     }
+}
+
+// ---------------------------------------------------------------------------
+// Indexer client helper
+// ---------------------------------------------------------------------------
+
+/// Fetch the ordered lamport-balance history for `pubkey` in `[from, to]`
+/// from the indexer HTTP API and return a bincode-serialised `Vec<u64>`.
+pub async fn fetch_historical_avg_inputs(
+    indexer_url: &str,
+    inputs: &HistoricalAvgInputs,
+) -> anyhow::Result<Vec<u8>> {
+    let pubkey_b58 = bs58::encode(&inputs.pubkey).into_string();
+    let url = format!(
+        "{indexer_url}/account_history/{pubkey_b58}?from_slot={}&to_slot={}",
+        inputs.from_slot, inputs.to_slot,
+    );
+
+    let balances: Vec<u64> = reqwest::get(&url)
+        .await
+        .with_context(|| format!("GET {url}"))?
+        .error_for_status()
+        .with_context(|| format!("indexer returned error for {url}"))?
+        .json()
+        .await
+        .with_context(|| format!("failed to parse indexer response from {url}"))?;
+
+    bincode::serialize(&balances).context("failed to bincode-encode balances")
 }
 
 // ---------------------------------------------------------------------------
@@ -195,6 +284,8 @@ pub struct ListenerConfig {
     pub rpc_url: String,
     pub redis_url: String,
     pub jobs_queue: String,
+    /// Base URL of the indexer HTTP server, e.g. `http://localhost:8080`.
+    pub indexer_url: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -247,6 +338,7 @@ pub async fn run_listener(
                             &rpc,
                             &mut redis_conn,
                             &config.jobs_queue,
+                            &config.indexer_url,
                             &program_id,
                             &seen,
                             logs_resp,
@@ -278,6 +370,7 @@ async fn handle_log_event(
     rpc: &RpcClient,
     redis_conn: &mut redis::aio::MultiplexedConnection,
     jobs_queue: &str,
+    indexer_url: &str,
     program_id: &Pubkey,
     seen: &Arc<Mutex<HashSet<[u8; 32]>>>,
     logs_resp: solana_client::rpc_response::RpcLogsResponse,
@@ -318,11 +411,47 @@ async fn handle_log_event(
         return Ok(());
     }
 
-    let job = build_prover_job(&meta);
+    // Parse raw inputs from logs and enrich for known computation types.
+    let raw_inputs = parse_inputs_from_logs(&logs_resp.logs).unwrap_or_default();
+    let prover_inputs = enrich_inputs(&meta.computation_id, &raw_inputs, indexer_url).await?;
+
+    let job = build_prover_job(&meta, prover_inputs);
     dispatcher::push_job(redis_conn, jobs_queue, &job).await?;
 
     info!("Dispatched job for request {}", hex_encode(&request_id));
     Ok(())
+}
+
+/// Derive final prover `inputs` from the raw on-chain bytes.
+///
+/// For **HistoricalAvg** this means fetching lamport balances from the indexer
+/// and returning them as a bincode-encoded `Vec<u64>`.
+/// For all other computations the raw bytes are passed through unchanged.
+async fn enrich_inputs(
+    _computation_id: &[u8; 32],
+    raw_inputs: &[u8],
+    indexer_url: &str,
+) -> anyhow::Result<Vec<u8>> {
+    // Determine if this is a HistoricalAvg request by trying to decode the
+    // 48-byte layout.  A concrete computation-ID comparison would require
+    // loading the ELF here (heavy); the fixed input length acts as a
+    // lightweight proxy while still being unambiguous in practice.
+    if raw_inputs.len() == HISTORICAL_AVG_INPUTS_LEN {
+        if let Some(ha_inputs) = decode_historical_avg_inputs(raw_inputs) {
+            let encoded = fetch_historical_avg_inputs(indexer_url, &ha_inputs)
+                .await
+                .with_context(|| {
+                    format!(
+                        "failed to fetch historical_avg inputs for pubkey {}",
+                        bs58::encode(&ha_inputs.pubkey).into_string()
+                    )
+                })?;
+            return Ok(encoded);
+        }
+    }
+
+    // Passthrough for fibonacci and any other fixed-format computations.
+    Ok(raw_inputs.to_vec())
 }
 
 /// Encode a byte slice as lower-case hex (no external crate).
@@ -400,6 +529,51 @@ mod tests {
         assert_eq!(parse_hex32(&hex), Some(original));
     }
 
+    // --- parse_inputs_from_logs ---
+
+    #[test]
+    fn detects_inputs_log() {
+        let raw = vec![0x01u8, 0x02, 0xff];
+        let hex: String = raw.iter().map(|b| format!("{:02x}", b)).collect();
+        let logs = vec![
+            format!("Program log: sonar:inputs:{}", hex),
+            "Program EE2s... success".to_string(),
+        ];
+        assert_eq!(parse_inputs_from_logs(&logs), Some(raw));
+    }
+
+    #[test]
+    fn returns_none_when_no_inputs_log() {
+        let logs = vec!["Program EE2s... success".to_string()];
+        assert!(parse_inputs_from_logs(&logs).is_none());
+    }
+
+    #[test]
+    fn empty_inputs_hex_decodes_to_empty_vec() {
+        let logs = vec!["Program log: sonar:inputs:".to_string()];
+        assert_eq!(parse_inputs_from_logs(&logs), Some(Vec::new()));
+    }
+
+    // --- decode_historical_avg_inputs ---
+
+    #[test]
+    fn decode_historical_avg_inputs_roundtrip() {
+        let pubkey = [0x42u8; 32];
+        let from_slot = 1000u64;
+        let to_slot = 2000u64;
+        let raw = encode_historical_avg_inputs(&pubkey, from_slot, to_slot);
+        let decoded = decode_historical_avg_inputs(&raw).expect("should decode");
+        assert_eq!(decoded.pubkey, pubkey);
+        assert_eq!(decoded.from_slot, from_slot);
+        assert_eq!(decoded.to_slot, to_slot);
+    }
+
+    #[test]
+    fn decode_historical_avg_inputs_rejects_wrong_len() {
+        assert!(decode_historical_avg_inputs(&[0u8; 10]).is_none());
+        assert!(decode_historical_avg_inputs(&[0u8; 49]).is_none());
+    }
+
     // --- decode_request_metadata ---
 
     fn make_metadata_bytes() -> Vec<u8> {
@@ -465,16 +639,25 @@ mod tests {
     // --- build_prover_job ---
 
     #[test]
-    fn build_job_from_metadata() {
+    fn build_job_from_metadata_empty_inputs() {
         let data = make_metadata_bytes();
         let meta = decode_request_metadata(&data).unwrap();
-        let job = build_prover_job(&meta);
+        let job = build_prover_job(&meta, Vec::new());
         assert_eq!(job.request_id, [1u8; 32]);
         assert_eq!(job.computation_id, [5u8; 32]);
         assert_eq!(job.deadline, 9999);
         assert_eq!(job.fee, 123);
         assert_eq!(*job.callback_program.as_bytes(), [3u8; 32]);
         assert_eq!(*job.result_account.as_bytes(), [4u8; 32]);
-        assert!(job.inputs.is_empty(), "Phase 5.1: inputs are empty");
+        assert!(job.inputs.is_empty());
+    }
+
+    #[test]
+    fn build_job_from_metadata_with_inputs() {
+        let data = make_metadata_bytes();
+        let meta = decode_request_metadata(&data).unwrap();
+        let inputs = vec![1u8, 2, 3];
+        let job = build_prover_job(&meta, inputs.clone());
+        assert_eq!(job.inputs, inputs);
     }
 }

@@ -65,6 +65,7 @@ async fn main() -> anyhow::Result<()> {
         rpc_url: cfg.network.rpc_url.clone(),
         redis_url: cfg.coordinator.redis_url.clone(),
         jobs_queue: dispatcher::JOBS_QUEUE.to_string(),
+        indexer_url: cfg.coordinator.indexer_url.clone(),
     };
     let listener_rx = shutdown_rx.clone();
     let listener_handle =

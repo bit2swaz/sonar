@@ -93,6 +93,11 @@ overflow-checks = true
 [dev-dependencies]
 anchor-lang = { workspace = true }
 bincode = { workspace = true }
+bs58 = { workspace = true }
+reqwest = { workspace = true }
+solana-client = { workspace = true }
 solana-program-test = "2.3.13"
 sonar-program = { path = "program" }
 historical-avg-client = { path = "programs/historical_avg_client" }
+tempfile = "3"
+testcontainers = "0.25"

@@ -116,7 +116,11 @@ jobs:
       - name: Build Anchor program
         run: |
           npm install
-          anchor build
+          # Use the repo wrapper instead of `anchor build` directly because it
+          # pins Solana platform-tools v1.53 (Cargo 1.89). The default SBF tool
+          # chain behind `anchor build` can resolve to Cargo 1.84, which cannot
+          # parse newer `edition2024` crate manifests pulled in by current deps.
+          ./scripts/build-program.sh
 
       - name: Run Anchor tests
         run: |

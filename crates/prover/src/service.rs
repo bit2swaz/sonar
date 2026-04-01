@@ -120,7 +120,16 @@ impl JobProcessor for Sp1JobProcessor {
             "processing prover job"
         );
 
-        let (proof, result, public_inputs) = prove(&job.computation_id, &job.inputs)?;
+        // `prove()` calls SP1's internal `block_on`, which panics if invoked
+        // inside a tokio async context.  Offload it to a dedicated blocking
+        // thread via `spawn_blocking` so the tokio reactor is not blocked.
+        let computation_id = job.computation_id;
+        let inputs = job.inputs.clone();
+        let (proof, result, public_inputs) =
+            tokio::task::spawn_blocking(move || prove(&computation_id, &inputs))
+                .await
+                .context("prover blocking task panicked")??;
+
         Ok(ProverResponse {
             request_id: job.request_id,
             result,

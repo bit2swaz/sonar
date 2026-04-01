@@ -13,7 +13,7 @@ CLIENT_KEYPAIR="${DEMO_DIR}/client-keypair.json"
 OBSERVED_KEYPAIR="${DEMO_DIR}/observed-keypair.json"
 
 SONAR_PROGRAM_ID="EE2sQ2VRa1hY3qjPQ1PEwuPZX6dGwTZwHMCumWrGn3sV"
-HISTORICAL_AVG_CLIENT_ID="4iFJKn91J7zvGbaXvezVGJkpYfmC3xJdY2Er7U616G96"
+ECHO_CALLBACK_PROGRAM_ID="3RBU9G6Mws9nS8bQPg2cVRbS2v7CgsjAvv2MwmTcmbyA"
 
 POSTGRES_CONTAINER="sonar-demo-postgres"
 REDIS_CONTAINER="sonar-demo-redis"
@@ -22,7 +22,7 @@ RPC_PORT="${RPC_PORT:-8899}"
 WS_PORT="$((RPC_PORT + 1))"
 FAUCET_PORT="${FAUCET_PORT:-9900}"
 DYNAMIC_PORT_START="${DYNAMIC_PORT_START:-10000}"
-DYNAMIC_PORT_END="${DYNAMIC_PORT_END:-10020}"
+DYNAMIC_PORT_END="${DYNAMIC_PORT_END:-10030}"
 INDEXER_HTTP_PORT="${INDEXER_HTTP_PORT:-8080}"
 POSTGRES_PORT="${POSTGRES_PORT:-5432}"
 REDIS_PORT="${REDIS_PORT:-6379}"
@@ -175,17 +175,12 @@ wait_for_validator() {
 wait_for_result() {
 	local expected="$1"
 	export DEMO_RPC_URL="http://127.0.0.1:${RPC_PORT}"
-	export DEMO_CLIENT_KEYPAIR="${CLIENT_KEYPAIR}"
 	export DEMO_STATE_JSON="${STATE_JSON}"
 	export DEMO_EXPECTED_AVG="${expected}"
 	node <<'NODE'
 const anchor = require('@coral-xyz/anchor');
 const fs = require('fs');
-const { Connection, Keypair, PublicKey } = anchor.web3;
-
-function loadKeypair(path) {
-	return Keypair.fromSecretKey(Uint8Array.from(JSON.parse(fs.readFileSync(path, 'utf8'))));
-}
+const { Connection, PublicKey } = anchor.web3;
 
 function readState(path) {
 	return JSON.parse(fs.readFileSync(path, 'utf8'));
@@ -194,23 +189,21 @@ function readState(path) {
 async function main() {
 	const connection = new Connection(process.env.DEMO_RPC_URL, 'confirmed');
 	const state = readState(process.env.DEMO_STATE_JSON);
-	const callbackStatePubkey = new PublicKey(state.callback_state);
+	const resultAccountPubkey = new PublicKey(state.result_account);
 	const expected = BigInt(process.env.DEMO_EXPECTED_AVG);
 	const coder = new anchor.BorshAccountsCoder({
 		version: '0.1.0',
-		name: 'historical_avg_client',
+		name: 'sonar_program',
 		instructions: [],
 		accounts: [{
-			name: 'CallbackState',
+			name: 'ResultAccount',
 			type: {
 				kind: 'struct',
 				fields: [
 					{ name: 'requestId', type: { array: ['u8', 32] } },
-					{ name: 'targetAccount', type: { array: ['u8', 32] } },
-					{ name: 'fromSlot', type: 'u64' },
-					{ name: 'toSlot', type: 'u64' },
 					{ name: 'result', type: 'bytes' },
 					{ name: 'isSet', type: 'bool' },
+					{ name: 'writtenAt', type: { option: 'u64' } },
 					{ name: 'bump', type: 'u8' }
 				]
 			}
@@ -220,13 +213,13 @@ async function main() {
 	});
 
 	for (let attempt = 0; attempt < 180; attempt += 1) {
-		const accountInfo = await connection.getAccountInfo(callbackStatePubkey, 'confirmed');
+		const accountInfo = await connection.getAccountInfo(resultAccountPubkey, 'confirmed');
 		if (accountInfo) {
-			const decoded = coder.decode('CallbackState', accountInfo.data);
+			const decoded = coder.decode('ResultAccount', accountInfo.data);
 			if (decoded && decoded.isSet) {
 				const result = Buffer.from(decoded.result);
 				const value = result.readBigUInt64LE(0);
-				console.log(`callback_state=${callbackStatePubkey.toBase58()}`);
+				console.log(`result_account=${resultAccountPubkey.toBase58()}`);
 				console.log(`historical_avg_result=${value.toString()}`);
 				console.log(`expected_avg=${expected.toString()}`);
 				if (value !== expected) {
@@ -237,7 +230,7 @@ async function main() {
 		}
 		await new Promise((resolve) => setTimeout(resolve, 1000));
 	}
-	throw new Error('timed out waiting for callback state');
+	throw new Error('timed out waiting for result account');
 }
 
 main().catch((error) => {
@@ -251,7 +244,14 @@ build_artifacts() {
 	log "building sonar binaries and localnet programs"
 	cargo build --bins
 	cargo build -p sonar-indexer --lib
-	anchor build
+	[[ -f "${ROOT_DIR}/target/deploy/sonar_program.so" ]] || {
+		echo "missing ${ROOT_DIR}/target/deploy/sonar_program.so; build it before running the demo" >&2
+		exit 1
+	}
+	[[ -f "${ROOT_DIR}/target/deploy/echo_callback.so" ]] || {
+		echo "missing ${ROOT_DIR}/target/deploy/echo_callback.so; build it before running the demo" >&2
+		exit 1
+	}
 }
 
 start_containers() {
@@ -294,25 +294,11 @@ start_validator() {
 		--dynamic-port-range "${DYNAMIC_PORT_START}-${DYNAMIC_PORT_END}" \
 		--bind-address 127.0.0.1 \
 		--geyser-plugin-config "${PLUGIN_CONFIG_JSON}" \
+		--bpf-program "${SONAR_PROGRAM_ID}" "${ROOT_DIR}/target/deploy/sonar_program.so" \
+		--bpf-program "${ECHO_CALLBACK_PROGRAM_ID}" "${ROOT_DIR}/target/deploy/echo_callback.so" \
 		>"${LOG_DIR}/validator.log" 2>&1 &
 	echo $! >"${DEMO_DIR}/validator.pid"
 	wait_for_validator
-}
-
-deploy_programs() {
-	log "deploying sonar program"
-	solana program deploy \
-		--url "http://127.0.0.1:${RPC_PORT}" \
-		--program-id "${ROOT_DIR}/target/deploy/sonar_program-keypair.json" \
-		"${ROOT_DIR}/target/deploy/sonar_program.so" \
-		>>"${LOG_DIR}/validator.log" 2>&1
-
-	log "deploying historical_avg_client program"
-	solana program deploy \
-		--url "http://127.0.0.1:${RPC_PORT}" \
-		--program-id "${ROOT_DIR}/target/deploy/historical_avg_client-keypair.json" \
-		"${ROOT_DIR}/target/deploy/historical_avg_client.so" \
-		>>"${LOG_DIR}/validator.log" 2>&1
 }
 
 fund_keypairs() {
@@ -425,16 +411,17 @@ async function main() {
 
 	const values = balances.map((item) => item.lamports);
 	const expectedAvg = values.reduce((acc, value) => acc + value, 0) / values.length;
+	const toSlot = balances[balances.length - 1].slot;
 	writeState(process.env.DEMO_STATE_JSON, {
 		observed_pubkey: observed.publicKey.toBase58(),
-		from_slot: balances[0].slot,
-		to_slot: balances[balances.length - 1].slot,
+		from_slot: 0,
+		to_slot: toSlot,
 		expected_avg: String(expectedAvg),
 		seeded_balances: JSON.stringify(values),
 	});
 	console.log(`observed_pubkey=${observed.publicKey.toBase58()}`);
-	console.log(`from_slot=${balances[0].slot}`);
-	console.log(`to_slot=${balances[balances.length - 1].slot}`);
+	console.log(`from_slot=0`);
+	console.log(`to_slot=${toSlot}`);
 	console.log(`expected_avg=${expectedAvg}`);
 }
 
@@ -446,12 +433,12 @@ NODE
 }
 
 request_historical_avg() {
-	log "sending historical-average request through the client program"
+	log "sending historical-average request directly to the sonar program"
 	export DEMO_RPC_URL="http://127.0.0.1:${RPC_PORT}"
 	export DEMO_CLIENT_KEYPAIR="${CLIENT_KEYPAIR}"
 	export DEMO_STATE_JSON="${STATE_JSON}"
 	export DEMO_SONAR_PROGRAM_ID="${SONAR_PROGRAM_ID}"
-	export DEMO_CLIENT_PROGRAM_ID="${HISTORICAL_AVG_CLIENT_ID}"
+	export DEMO_CALLBACK_PROGRAM_ID="${ECHO_CALLBACK_PROGRAM_ID}"
 	node <<'NODE'
 const anchor = require('@coral-xyz/anchor');
 const fs = require('fs');
@@ -500,32 +487,34 @@ async function main() {
 	const state = readState(process.env.DEMO_STATE_JSON);
 	const requestId = crypto.randomBytes(32);
 	const sonarProgramId = new PublicKey(process.env.DEMO_SONAR_PROGRAM_ID);
-	const clientProgramId = new PublicKey(process.env.DEMO_CLIENT_PROGRAM_ID);
+	const callbackProgramId = new PublicKey(process.env.DEMO_CALLBACK_PROGRAM_ID);
 	const observed = new PublicKey(state.observed_pubkey);
 
-	const [callbackState] = PublicKey.findProgramAddressSync([Buffer.from('client-result'), requestId], clientProgramId);
 	const [requestMetadata] = PublicKey.findProgramAddressSync([Buffer.from('request'), requestId], sonarProgramId);
 	const [resultAccount] = PublicKey.findProgramAddressSync([Buffer.from('result'), requestId], sonarProgramId);
-
-	const payload = Buffer.concat([
-		discriminator('request_historical_avg'),
-		requestId,
+	const computationId = Buffer.from([180, 134, 237, 198, 23, 219, 85, 143, 84, 245, 61, 62, 222, 122, 82, 179, 3, 201, 204, 111, 144, 62, 32, 159, 91, 227, 160, 78, 252, 195, 98, 100]);
+	const rawInputs = Buffer.concat([
 		observed.toBuffer(),
 		encodeU64(state.from_slot),
 		encodeU64(state.to_slot),
-		encodeU64(2_000_000),
+	]);
+
+	const payload = Buffer.concat([
+		discriminator('request'),
+		requestId,
+		computationId,
+		encodeBytes(rawInputs),
 		encodeU64((await connection.getSlot('confirmed')) + 500),
+		encodeU64(2_000_000),
 	]);
 
 	const instruction = new TransactionInstruction({
-		programId: clientProgramId,
+		programId: sonarProgramId,
 		keys: [
 			{ pubkey: payer.publicKey, isSigner: true, isWritable: true },
-			{ pubkey: clientProgramId, isSigner: false, isWritable: false },
-			{ pubkey: callbackState, isSigner: false, isWritable: true },
+			{ pubkey: callbackProgramId, isSigner: false, isWritable: false },
 			{ pubkey: requestMetadata, isSigner: false, isWritable: true },
 			{ pubkey: resultAccount, isSigner: false, isWritable: true },
-			{ pubkey: sonarProgramId, isSigner: false, isWritable: false },
 			{ pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
 		],
 		data: payload,
@@ -535,13 +524,11 @@ async function main() {
 
 	writeState(process.env.DEMO_STATE_JSON, {
 		request_id_hex: requestId.toString('hex'),
-		callback_state: callbackState.toBase58(),
 		request_metadata: requestMetadata.toBase58(),
 		result_account: resultAccount.toBase58(),
 	});
 
 	console.log(`request_id_hex=${requestId.toString('hex')}`);
-	console.log(`callback_state=${callbackState.toBase58()}`);
 	console.log(`request_metadata=${requestMetadata.toBase58()}`);
 	console.log(`result_account=${resultAccount.toBase58()}`);
 }
@@ -561,7 +548,6 @@ Indexer URL: http://127.0.0.1:${INDEXER_HTTP_PORT}
 Observed account: $(read_state observed_pubkey 2>/dev/null || true)
 Request metadata PDA: $(read_state request_metadata 2>/dev/null || true)
 Result PDA: $(read_state result_account 2>/dev/null || true)
-Callback state PDA: $(read_state callback_state 2>/dev/null || true)
 Expected average: $(read_state expected_avg 2>/dev/null || true)
 EOF
 }
@@ -572,7 +558,6 @@ tail_logs() {
 
 start_stack() {
 	need_cmd docker
-	need_cmd anchor
 	need_cmd solana
 	need_cmd solana-test-validator
 	need_cmd solana-keygen
@@ -590,7 +575,6 @@ start_stack() {
 	write_runtime_config
 	generate_keypairs
 	start_validator
-	deploy_programs
 	fund_keypairs
 	start_services
 	seed_account_history

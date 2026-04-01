@@ -68,7 +68,7 @@ async fn main() -> anyhow::Result<()> {
         indexer_url: cfg.coordinator.indexer_url.clone(),
     };
     let listener_rx = shutdown_rx.clone();
-    let listener_handle =
+    let mut listener_handle =
         tokio::spawn(async move { run_listener(listener_cfg, listener_rx).await });
 
     // ── Callback worker task ──────────────────────────────────────────────
@@ -82,25 +82,61 @@ async fn main() -> anyhow::Result<()> {
         max_retries: 3,
     };
     let callback_rx = shutdown_rx.clone();
-    let callback_handle =
+    let mut callback_handle =
         tokio::spawn(async move { run_callback_worker(callback_cfg, callback_rx).await });
 
     info!("Coordinator running — press Ctrl+C to stop");
 
-    // ── Wait for SIGINT / SIGTERM ─────────────────────────────────────────
-    tokio::signal::ctrl_c()
-        .await
-        .context("await ctrl_c signal")?;
+    // ── Wait for SIGINT / SIGTERM *or* early task failure ─────────────────
+    //
+    // Using `tokio::select!` ensures that if either task exits early (e.g. a
+    // connection error) the error is immediately logged and the process exits
+    // with a non-zero code, making the failure visible to the test harness.
+    tokio::select! {
+        _ = tokio::signal::ctrl_c() => {
+            info!("Ctrl+C received — shutting down");
+        }
+        res = &mut listener_handle => {
+            match res {
+                Ok(Ok(())) => info!("Listener task exited normally"),
+                Ok(Err(e)) => {
+                    error!("Listener task failed: {e:#}");
+                    let _ = shutdown_tx.send(true);
+                    return Err(e).context("listener task failed");
+                },
+                Err(e) => {
+                    error!("Listener task panicked: {e:?}");
+                    let _ = shutdown_tx.send(true);
+                    anyhow::bail!("listener task panicked: {e:?}");
+                },
+            }
+        }
+        res = &mut callback_handle => {
+            match res {
+                Ok(Ok(())) => info!("Callback task exited normally"),
+                Ok(Err(e)) => {
+                    error!("Callback task failed: {e:#}");
+                    let _ = shutdown_tx.send(true);
+                    return Err(e).context("callback task failed");
+                },
+                Err(e) => {
+                    error!("Callback task panicked: {e:?}");
+                    let _ = shutdown_tx.send(true);
+                    anyhow::bail!("callback task panicked: {e:?}");
+                },
+            }
+        }
+    }
 
     info!("Shutdown signal received — stopping tasks");
     let _ = shutdown_tx.send(true);
 
-    // ── Join tasks ────────────────────────────────────────────────────────
-    if let Err(e) = listener_handle.await {
-        error!("Listener task panicked: {e:?}");
+    // ── Join remaining tasks ──────────────────────────────────────────────
+    if let Ok(Err(e)) = listener_handle.await {
+        error!("Listener task failed during shutdown: {e:#}");
     }
-    if let Err(e) = callback_handle.await {
-        error!("Callback task panicked: {e:?}");
+    if let Ok(Err(e)) = callback_handle.await {
+        error!("Callback task failed during shutdown: {e:#}");
     }
 
     info!("Coordinator stopped");

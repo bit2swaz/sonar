@@ -1,6 +1,6 @@
-# sonar
+# Sonar
 
-sonar is a Solana zk coprocessor that lets an on-chain program request off-chain computation, queue the work, generate a proof, and return a verified result through a callback transaction.
+Sonar is a Solana ZK coprocessor that lets an on-chain program request off-chain computation, queue the work, generate a proof, and return a verified result through a callback transaction.
 
 ## what problem it solves
 

@@ -18,6 +18,7 @@
 use std::collections::HashSet;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use anyhow::Context as _;
 use futures_util::StreamExt as _;
@@ -316,7 +317,12 @@ pub async fn run_listener(
         .await
         .context("pubsub connect")?;
 
-    let filter = RpcTransactionLogsFilter::Mentions(vec![PROGRAM_ID_STR.to_string()]);
+    // Use the `All` filter instead of `Mentions` so we don't miss events.
+    // The Agave 3.x validator / SDK 2.x client combination can silently drop
+    // `Mentions`-filtered notifications; processing every event and filtering
+    // in-process is more reliable.  `handle_log_event` exits early for any
+    // transaction that does not contain a `sonar:request:` log line.
+    let filter = RpcTransactionLogsFilter::All;
     let log_cfg = RpcTransactionLogsConfig {
         commitment: Some(CommitmentConfig::confirmed()),
     };
@@ -328,9 +334,18 @@ pub async fn run_listener(
 
     info!("Listener started — watching {PROGRAM_ID_STR}");
 
+    // Polling fallback: every 2 s we call `getSignaturesForAddress` +
+    // Polling fallback: every 2 s we call `getProgramAccounts` for the Sonar
+    // program to discover any pending `RequestMetadata` accounts.  This
+    // compensates for the Agave 3.x / SDK 2.x WebSocket subscription
+    // compatibility issue where `logsSubscribe` silently delivers no events.
+    let mut polling_ticker = tokio::time::interval(Duration::from_secs(2));
+    polling_ticker.tick().await; // consume the initial tick (fires immediately)
+    let mut ws_stream_open = true;
+
     loop {
         tokio::select! {
-            maybe = stream.next() => {
+            maybe = async { if ws_stream_open { stream.next().await } else { std::future::pending().await } } => {
                 match maybe {
                     Some(notification) => {
                         let logs_resp = notification.value;
@@ -345,13 +360,31 @@ pub async fn run_listener(
                         )
                         .await
                         {
-                            warn!("handle_log_event: {e:#}");
+                            warn!("handle_log_event (ws): {e:#}");
                         }
                     }
                     None => {
-                        error!("log subscription stream closed");
-                        anyhow::bail!("stream closed");
+                        // Stream closed — not fatal, rely on polling as fallback.
+                        // Mark ws_stream_open=false so we don't keep polling a
+                        // closed stream (which would immediately return None and
+                        // starve the ticker branch).
+                        error!("log subscription stream closed (will rely on polling)");
+                        ws_stream_open = false;
                     }
+                }
+            }
+            _ = polling_ticker.tick() => {
+                if let Err(e) = poll_pending_requests(
+                    &config.rpc_url,
+                    &program_id,
+                    &mut redis_conn,
+                    &config.jobs_queue,
+                    &config.indexer_url,
+                    &seen,
+                )
+                .await
+                {
+                    warn!("poll_pending_requests: {e:#}");
                 }
             }
             _ = shutdown.changed() => {
@@ -364,6 +397,311 @@ pub async fn run_listener(
     }
 
     Ok(())
+}
+
+/// Poll for pending `RequestMetadata` accounts owned by the Sonar program and
+/// dispatch any that have not yet been processed to the Redis jobs queue.
+///
+/// Uses `getProgramAccounts` with a discriminator filter so it works reliably
+/// even when `getSignaturesForAddress` does not index program invocations
+/// (which is the case on `solana-test-validator` 3.0.13).
+async fn poll_pending_requests(
+    rpc_url: &str,
+    program_id: &Pubkey,
+    redis_conn: &mut redis::aio::MultiplexedConnection,
+    jobs_queue: &str,
+    indexer_url: &str,
+    seen: &Arc<Mutex<HashSet<[u8; 32]>>>,
+) -> anyhow::Result<()> {
+    // Anchor discriminator for `RequestMetadata` = sha256("account:RequestMetadata")[0..8]
+    // = [14, 83, 46, 148, 18, 10, 201, 25]
+    const DISC: [u8; 8] = [14, 83, 46, 148, 18, 10, 201, 25];
+    let disc_b64 = base64_encode(&DISC);
+
+    // status=Pending is 0 at byte offset 184
+    // Layout: 8 disc + 32*5 pubkeys + 8 deadline + 8 fee = 184
+    let status_b64 = base64_encode(&[0u8]);
+
+    let body = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "getProgramAccounts",
+        "params": [
+            program_id.to_string(),
+            {
+                "encoding": "base64",
+                "commitment": "confirmed",
+                "filters": [
+                    {"memcmp": {"offset": 0, "bytes": disc_b64, "encoding": "base64"}},
+                    {"memcmp": {"offset": 184, "bytes": status_b64, "encoding": "base64"}}
+                ]
+            }
+        ]
+    });
+
+    let resp: serde_json::Value = reqwest::Client::new()
+        .post(rpc_url)
+        .json(&body)
+        .send()
+        .await
+        .context("getProgramAccounts HTTP")?
+        .json()
+        .await
+        .context("getProgramAccounts JSON parse")?;
+
+    let accounts = match resp["result"].as_array() {
+        Some(a) => a.clone(),
+        None => {
+            if resp["error"].is_object() {
+                warn!("polling: getProgramAccounts error: {}", resp["error"]);
+            }
+            debug!("polling: no pending RequestMetadata accounts for {program_id}");
+            return Ok(());
+        },
+    };
+
+    if accounts.is_empty() {
+        debug!("polling: no pending RequestMetadata accounts for {program_id}");
+        return Ok(());
+    }
+
+    info!(
+        "polling: found {} pending RequestMetadata account(s)",
+        accounts.len()
+    );
+
+    for entry in &accounts {
+        let pda_str = entry["pubkey"].as_str().unwrap_or("");
+        let data_arr = entry["account"]["data"].as_array();
+
+        let raw_bytes = if let Some(arr) = data_arr {
+            if let Some(b64) = arr.first().and_then(|v| v.as_str()) {
+                base64_decode(b64).unwrap_or_default()
+            } else {
+                vec![]
+            }
+        } else {
+            vec![]
+        };
+
+        let meta = match decode_request_metadata(&raw_bytes) {
+            Some(m) => m,
+            None => {
+                warn!("polling: failed to decode RequestMetadata at {pda_str}");
+                continue;
+            },
+        };
+
+        // Deduplicate: skip if already dispatched.
+        {
+            let mut guard = seen.lock().unwrap();
+            if !guard.insert(meta.request_id) {
+                debug!(
+                    "polling: duplicate request {} — skipping",
+                    hex_encode(&meta.request_id)
+                );
+                continue;
+            }
+        }
+
+        info!(
+            "polling: dispatching job for request {}",
+            hex_encode(&meta.request_id)
+        );
+
+        if let Err(e) =
+            process_request_metadata(rpc_url, redis_conn, jobs_queue, indexer_url, pda_str, &meta)
+                .await
+        {
+            warn!("polling: process_request_metadata: {e:#}");
+            // Remove from seen so we retry next poll.
+            let mut guard = seen.lock().unwrap();
+            guard.remove(&meta.request_id);
+        }
+    }
+
+    Ok(())
+}
+
+/// Fetch the creation transaction for a `RequestMetadata` PDA and build a
+/// [`ProverJob`] from its logs + on-chain metadata.
+async fn process_request_metadata(
+    rpc_url: &str,
+    redis_conn: &mut redis::aio::MultiplexedConnection,
+    jobs_queue: &str,
+    indexer_url: &str,
+    pda_str: &str,
+    meta: &OnChainRequestMetadata,
+) -> anyhow::Result<()> {
+    // Get the most recent signature for this PDA (the creation tx).
+    let sig_body = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "getSignaturesForAddress",
+        "params": [
+            pda_str,
+            {"limit": 1, "commitment": "confirmed"}
+        ]
+    });
+
+    let sig_resp: serde_json::Value = reqwest::Client::new()
+        .post(rpc_url)
+        .json(&sig_body)
+        .send()
+        .await
+        .context("getSignaturesForAddress HTTP")?
+        .json()
+        .await
+        .context("getSignaturesForAddress JSON")?;
+
+    let sig_str = sig_resp["result"]
+        .as_array()
+        .and_then(|a| a.first())
+        .and_then(|s| s["signature"].as_str())
+        .ok_or_else(|| anyhow::anyhow!("no signatures for PDA {pda_str}"))?
+        .to_string();
+
+    // Fetch transaction logs.
+    let logs = fetch_tx_logs(rpc_url, &sig_str).await?.unwrap_or_default();
+
+    info!(
+        "process_request_metadata: sig={sig_str} logs={} lines",
+        logs.len()
+    );
+    for l in &logs {
+        info!("  log: {l}");
+    }
+
+    // Parse raw inputs from logs and enrich for known computation types.
+    let raw_inputs = parse_inputs_from_logs(&logs).unwrap_or_default();
+    info!(
+        "process_request_metadata: raw_inputs len={}",
+        raw_inputs.len()
+    );
+    let prover_inputs = enrich_inputs(&meta.computation_id, &raw_inputs, indexer_url).await?;
+    info!(
+        "process_request_metadata: prover_inputs len={}",
+        prover_inputs.len()
+    );
+
+    let job = build_prover_job(meta, prover_inputs);
+    dispatcher::push_job(redis_conn, jobs_queue, &job).await?;
+
+    info!(
+        "Dispatched job for request {} (via polling)",
+        hex_encode(&meta.request_id)
+    );
+    Ok(())
+}
+
+/// Fetch the `logMessages` for a confirmed transaction via a raw JSON-RPC call.
+/// Returns `None` when the transaction is not yet available.
+async fn fetch_tx_logs(rpc_url: &str, signature: &str) -> anyhow::Result<Option<Vec<String>>> {
+    let body = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "getTransaction",
+        "params": [
+            signature,
+            {
+                "encoding": "json",
+                "commitment": "confirmed",
+                "maxSupportedTransactionVersion": 0
+            }
+        ]
+    });
+
+    let response: serde_json::Value = reqwest::Client::new()
+        .post(rpc_url)
+        .json(&body)
+        .send()
+        .await
+        .context("getTransaction HTTP")?
+        .json::<serde_json::Value>()
+        .await
+        .context("getTransaction parse JSON")?;
+
+    if response["result"].is_null() {
+        return Ok(None);
+    }
+
+    let logs: Vec<String> = response["result"]["meta"]["logMessages"]
+        .as_array()
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    Ok(Some(logs))
+}
+
+/// Encode bytes as base64 (standard, no padding strip).
+fn base64_encode(data: &[u8]) -> String {
+    use std::fmt::Write;
+    // Simple base64 encoder — no external dep needed.
+    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::new();
+    for chunk in data.chunks(3) {
+        let b0 = chunk[0];
+        let b1 = *chunk.get(1).unwrap_or(&0);
+        let b2 = *chunk.get(2).unwrap_or(&0);
+        let _ = write!(out, "{}", TABLE[(b0 >> 2) as usize] as char);
+        let _ = write!(out, "{}", TABLE[((b0 & 3) << 4 | b1 >> 4) as usize] as char);
+        if chunk.len() > 1 {
+            let _ = write!(
+                out,
+                "{}",
+                TABLE[((b1 & 0xf) << 2 | b2 >> 6) as usize] as char
+            );
+        } else {
+            out.push('=');
+        }
+        if chunk.len() > 2 {
+            let _ = write!(out, "{}", TABLE[(b2 & 0x3f) as usize] as char);
+        } else {
+            out.push('=');
+        }
+    }
+    out
+}
+
+/// Decode a base64 string to bytes. Returns `None` on invalid input.
+fn base64_decode(s: &str) -> Option<Vec<u8>> {
+    // Use solana_sdk which re-exports base64 indirectly, or hand-roll.
+    let s = s.as_bytes();
+    let mut out = Vec::with_capacity(s.len() / 4 * 3);
+    fn val(c: u8) -> Option<u8> {
+        match c {
+            b'A'..=b'Z' => Some(c - b'A'),
+            b'a'..=b'z' => Some(c - b'a' + 26),
+            b'0'..=b'9' => Some(c - b'0' + 52),
+            b'+' => Some(62),
+            b'/' => Some(63),
+            b'=' => Some(0),
+            _ => None,
+        }
+    }
+    for chunk in s.chunks(4) {
+        if chunk.len() < 4 {
+            return None;
+        }
+        let v = [
+            val(chunk[0])?,
+            val(chunk[1])?,
+            val(chunk[2])?,
+            val(chunk[3])?,
+        ];
+        out.push((v[0] << 2) | (v[1] >> 4));
+        if chunk[2] != b'=' {
+            out.push((v[1] << 4) | (v[2] >> 2));
+        }
+        if chunk[3] != b'=' {
+            out.push((v[2] << 6) | v[3]);
+        }
+    }
+    Some(out)
 }
 
 async fn handle_log_event(

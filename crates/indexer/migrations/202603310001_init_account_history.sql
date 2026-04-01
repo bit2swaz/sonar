@@ -6,7 +6,7 @@ CREATE TABLE IF NOT EXISTS account_history (
     executable BOOLEAN NOT NULL,
     rent_epoch BIGINT NOT NULL,
     data_hash BYTEA NOT NULL,
-    write_version BIGINT NOT NULL,
+    write_version TEXT NOT NULL,
     PRIMARY KEY (slot, pubkey, write_version),
     CONSTRAINT account_history_pubkey_len CHECK (octet_length(pubkey) = 32),
     CONSTRAINT account_history_owner_len CHECK (octet_length(owner) = 32),

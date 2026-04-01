@@ -82,7 +82,7 @@ struct AccountStateRow {
     executable: bool,
     rent_epoch: i64,
     data_hash: Vec<u8>,
-    write_version: i64,
+    write_version: String,
 }
 
 impl<'r> sqlx::FromRow<'r, PgRow> for AccountStateRow {
@@ -122,24 +122,35 @@ pub async fn insert_account_batch(pool: &PgPool, updates: &[AccountUpdate]) -> R
         return Ok(());
     }
 
+    let normalized_updates = updates
+        .iter()
+        .map(|update| {
+            Ok((
+                to_i64("slot", update.slot)?,
+                update.pubkey.to_bytes().to_vec(),
+                to_i64("lamports", update.lamports)?,
+                update.owner.to_bytes().to_vec(),
+                update.executable,
+                u64_as_i64(update.rent_epoch),
+                update.data_hash.to_vec(),
+                format_write_version(update.write_version),
+            ))
+        })
+        .collect::<Result<Vec<_>>>()?;
+
     let mut query_builder: QueryBuilder<Postgres> = QueryBuilder::new(
 		"INSERT INTO account_history (slot, pubkey, lamports, owner, executable, rent_epoch, data_hash, write_version) ",
 	);
 
-    query_builder.push_values(updates.iter(), |mut row, update| {
-        row.push_bind(to_i64("slot", update.slot).expect("slot conversion overflow"))
-            .push_bind(update.pubkey.to_bytes().to_vec())
-            .push_bind(to_i64("lamports", update.lamports).expect("lamports conversion overflow"))
-            .push_bind(update.owner.to_bytes().to_vec())
-            .push_bind(update.executable)
-            .push_bind(
-                to_i64("rent_epoch", update.rent_epoch).expect("rent_epoch conversion overflow"),
-            )
-            .push_bind(update.data_hash.to_vec())
-            .push_bind(
-                to_i64("write_version", update.write_version)
-                    .expect("write_version conversion overflow"),
-            );
+    query_builder.push_values(normalized_updates, |mut row, update| {
+        row.push_bind(update.0)
+            .push_bind(update.1)
+            .push_bind(update.2)
+            .push_bind(update.3)
+            .push_bind(update.4)
+            .push_bind(update.5)
+            .push_bind(update.6)
+            .push_bind(update.7);
     });
 
     query_builder.push(
@@ -263,9 +274,9 @@ impl TryFrom<AccountStateRow> for AccountState {
             lamports: to_u64("lamports", row.lamports)?,
             owner: pubkey_from_vec("owner", row.owner)?,
             executable: row.executable,
-            rent_epoch: to_u64("rent_epoch", row.rent_epoch)?,
+            rent_epoch: i64_as_u64(row.rent_epoch),
             data_hash: bytes32_from_vec("data_hash", row.data_hash)?,
-            write_version: to_u64("write_version", row.write_version)?,
+            write_version: parse_write_version(&row.write_version)?,
         })
     }
 }
@@ -276,6 +287,28 @@ fn to_i64(field: &str, value: u64) -> Result<i64> {
 
 fn to_u64(field: &str, value: i64) -> Result<u64> {
     u64::try_from(value).with_context(|| format!("{field} was negative in postgres row"))
+}
+
+/// Bitwise-cast a `u64` to `i64` without bounds-checking.  Used for values
+/// such as `rent_epoch` that Solana assigns `u64::MAX` to for rent-exempt
+/// accounts — which would otherwise overflow a signed BIGINT check.
+fn u64_as_i64(value: u64) -> i64 {
+    i64::from_ne_bytes(value.to_ne_bytes())
+}
+
+/// Inverse of [`u64_as_i64`]: reconstruct the original `u64` bit-pattern.
+fn i64_as_u64(value: i64) -> u64 {
+    u64::from_ne_bytes(value.to_ne_bytes())
+}
+
+fn format_write_version(value: u64) -> String {
+    format!("{value:020}")
+}
+
+fn parse_write_version(value: &str) -> Result<u64> {
+    value
+        .parse::<u64>()
+        .with_context(|| format!("write_version '{value}' was not a valid u64"))
 }
 
 fn bytes32_from_vec(field: &str, bytes: Vec<u8>) -> Result<[u8; 32]> {

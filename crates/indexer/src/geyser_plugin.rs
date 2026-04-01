@@ -2,6 +2,8 @@ use std::{
     fs,
     path::Path,
     sync::{Arc, Mutex},
+    thread::sleep,
+    time::{Duration, Instant},
 };
 
 use anyhow::{anyhow, Context, Result as AnyhowResult};
@@ -68,13 +70,23 @@ impl DatabaseWriter {
             max_connections: config.max_connections,
         };
 
-        let pool = runtime
-            .block_on(async {
+        let deadline = Instant::now() + Duration::from_secs(30);
+
+        let pool = loop {
+            match runtime.block_on(async {
                 let pool = db::connect_pool(&db_config).await?;
                 db::run_migrations(&pool).await?;
                 AnyhowResult::<_>::Ok(pool)
-            })
-            .map_err(plugin_custom_error)?;
+            }) {
+                Ok(pool) => break pool,
+                Err(_error) if Instant::now() < deadline => {
+                    sleep(Duration::from_millis(250));
+                },
+                Err(error) => {
+                    return Err(plugin_custom_error(error));
+                },
+            }
+        };
 
         Ok(Self {
             runtime,

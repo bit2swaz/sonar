@@ -53,9 +53,6 @@ ignore = [
     "RUSTSEC-2025-0119",
     "RUSTSEC-2025-0134",
     "RUSTSEC-2025-0141",
-    # Low-severity PAX extension parsing issue in astral-tokio-tar (via testcontainers dev dep).
-    # Requires a secondary misbehaving tar parser to exploit; fixed upstream in >=0.6.0.
-    "RUSTSEC-2026-0066",
 ]
 
 [sources]

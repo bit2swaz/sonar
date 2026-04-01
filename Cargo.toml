@@ -100,4 +100,4 @@ solana-program-test = "2.3.13"
 sonar-program = { path = "program" }
 historical-avg-client = { path = "programs/historical_avg_client" }
 tempfile = "3"
-testcontainers = "0.25"
+testcontainers = "0.27.2"

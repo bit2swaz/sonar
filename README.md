@@ -85,7 +85,7 @@ npm install
 install the Solana and Anchor versions used in the repository:
 
 ```bash
-sh -c "$(curl -sSfL https://release.anza.xyz/v3.0.13/install)"
+sh -c "$(curl -sSfL https://release.anza.xyz/v2.3.13/install)"
 cargo install anchor-cli --version 0.32.1 --locked
 ```
 

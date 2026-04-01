@@ -28,6 +28,7 @@ POSTGRES_PORT="${POSTGRES_PORT:-5432}"
 REDIS_PORT="${REDIS_PORT:-6379}"
 
 export SP1_PROVER="${SP1_PROVER:-mock}"
+KEEP_ALIVE_ON_EXIT=0
 
 mkdir -p "${LOG_DIR}" "${LEDGER_DIR}"
 cd "${ROOT_DIR}"
@@ -96,7 +97,13 @@ cleanup_all() {
 	cleanup_containers
 }
 
-trap cleanup_all EXIT
+on_exit() {
+	if [[ "${KEEP_ALIVE_ON_EXIT}" != "1" ]]; then
+		cleanup_all
+	fi
+}
+
+trap on_exit EXIT
 
 write_plugin_config() {
 	cat >"${PLUGIN_CONFIG_JSON}" <<EOF
@@ -161,6 +168,28 @@ wait_for_http() {
 	return 1
 }
 
+wait_for_postgres() {
+	for _ in $(seq 1 60); do
+		if docker exec "${POSTGRES_CONTAINER}" pg_isready -U postgres >/dev/null 2>&1; then
+			return 0
+		fi
+		sleep 1
+	done
+	echo "timed out waiting for postgres container" >&2
+	return 1
+}
+
+wait_for_redis() {
+	for _ in $(seq 1 60); do
+		if docker exec "${REDIS_CONTAINER}" redis-cli ping >/dev/null 2>&1; then
+			return 0
+		fi
+		sleep 1
+	done
+	echo "timed out waiting for redis container" >&2
+	return 1
+}
+
 wait_for_validator() {
 	for _ in $(seq 1 90); do
 		if solana --url "http://127.0.0.1:${RPC_PORT}" slot >/dev/null 2>&1; then
@@ -178,9 +207,9 @@ wait_for_result() {
 	export DEMO_STATE_JSON="${STATE_JSON}"
 	export DEMO_EXPECTED_AVG="${expected}"
 	node <<'NODE'
-const anchor = require('@coral-xyz/anchor');
 const fs = require('fs');
-const { Connection, PublicKey } = anchor.web3;
+	const anchor = require('@coral-xyz/anchor');
+	const { Connection, PublicKey } = anchor.web3;
 
 function readState(path) {
 	return JSON.parse(fs.readFileSync(path, 'utf8'));
@@ -191,33 +220,24 @@ async function main() {
 	const state = readState(process.env.DEMO_STATE_JSON);
 	const resultAccountPubkey = new PublicKey(state.result_account);
 	const expected = BigInt(process.env.DEMO_EXPECTED_AVG);
-	const coder = new anchor.BorshAccountsCoder({
-		version: '0.1.0',
-		name: 'sonar_program',
-		instructions: [],
-		accounts: [{
-			name: 'ResultAccount',
-			type: {
-				kind: 'struct',
-				fields: [
-					{ name: 'requestId', type: { array: ['u8', 32] } },
-					{ name: 'result', type: 'bytes' },
-					{ name: 'isSet', type: 'bool' },
-					{ name: 'writtenAt', type: { option: 'u64' } },
-					{ name: 'bump', type: 'u8' }
-				]
-			}
-		}],
-		types: [],
-		metadata: {}
-	});
 
 	for (let attempt = 0; attempt < 180; attempt += 1) {
 		const accountInfo = await connection.getAccountInfo(resultAccountPubkey, 'confirmed');
 		if (accountInfo) {
-			const decoded = coder.decode('ResultAccount', accountInfo.data);
-			if (decoded && decoded.isSet) {
-				const result = Buffer.from(decoded.result);
+			const data = Buffer.from(accountInfo.data);
+			if (data.length >= 45) {
+				let offset = 8;
+				offset += 32;
+				const resultLen = data.readUInt32LE(offset);
+				offset += 4;
+				if (data.length >= offset + resultLen + 1) {
+					const result = data.subarray(offset, offset + resultLen);
+					offset += resultLen;
+					const isSet = data.readUInt8(offset) !== 0;
+					if (!isSet) {
+						await new Promise((resolve) => setTimeout(resolve, 1000));
+						continue;
+					}
 				const value = result.readBigUInt64LE(0);
 				console.log(`result_account=${resultAccountPubkey.toBase58()}`);
 				console.log(`historical_avg_result=${value.toString()}`);
@@ -226,6 +246,7 @@ async function main() {
 					throw new Error(`unexpected result ${value} != ${expected}`);
 				}
 				process.exit(0);
+				}
 			}
 		}
 		await new Promise((resolve) => setTimeout(resolve, 1000));
@@ -269,6 +290,9 @@ start_containers() {
 		--name "${REDIS_CONTAINER}" \
 		-p "127.0.0.1:${REDIS_PORT}:6379" \
 		redis:7.2.4 >/dev/null
+
+	wait_for_postgres
+	wait_for_redis
 }
 
 generate_keypairs() {
@@ -599,22 +623,27 @@ command_name="${1:-demo}"
 case "${command_name}" in
 	start)
 		start_stack
+		KEEP_ALIVE_ON_EXIT=1
 		;;
 	request)
+		KEEP_ALIVE_ON_EXIT=1
 		request_historical_avg
 		;;
 	result)
+		KEEP_ALIVE_ON_EXIT=1
 		wait_for_result "$(read_state expected_avg)"
 		;;
 	status)
+		KEEP_ALIVE_ON_EXIT=1
 		print_status
 		;;
 	logs)
+		KEEP_ALIVE_ON_EXIT=1
 		tail_logs
 		;;
 	stop)
 		cleanup_all
-		trap - EXIT
+		KEEP_ALIVE_ON_EXIT=1
 		;;
 	demo)
 		demo

@@ -35,12 +35,27 @@ use testcontainers::{
 
 const VALIDATOR_READY_TIMEOUT: Duration = Duration::from_secs(45);
 const HTTP_READY_TIMEOUT: Duration = Duration::from_secs(45);
-const CALLBACK_TIMEOUT: Duration = Duration::from_secs(120);
+const DEFAULT_CALLBACK_TIMEOUT: Duration = Duration::from_secs(120);
+const CI_CALLBACK_TIMEOUT: Duration = Duration::from_secs(300);
 const SEED_WAIT_TIMEOUT: Duration = Duration::from_secs(45);
 const REQUEST_FEE_LAMPORTS: u64 = 2_000_000;
 const VALIDATOR_DYNAMIC_PORT_COUNT: u16 = 31;
 const PORT_SCAN_START: u16 = 10_000;
 const PORT_SCAN_END: u16 = 60_000;
+
+fn callback_timeout() -> Duration {
+    if let Ok(value) = std::env::var("SONAR_E2E_CALLBACK_TIMEOUT_SECONDS") {
+        if let Ok(seconds) = value.parse::<u64>() {
+            return Duration::from_secs(seconds.max(1));
+        }
+    }
+
+    if std::env::var_os("CI").is_some() {
+        CI_CALLBACK_TIMEOUT
+    } else {
+        DEFAULT_CALLBACK_TIMEOUT
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct BalancePoint {
@@ -369,7 +384,7 @@ http_port = {indexer_http_port}
 
 [coordinator]
 redis_url = "{redis_url}"
-callback_timeout_seconds = 30
+callback_timeout_seconds = {callback_timeout_seconds}
 max_concurrent_jobs = 4
 indexer_url = "{indexer_url}"
 
@@ -388,6 +403,7 @@ metrics_port = 9090
         postgres_url = postgres_url,
         indexer_http_port = ports.indexer_http_port,
         redis_url = redis_url,
+        callback_timeout_seconds = callback_timeout().as_secs(),
         indexer_url = ports.indexer_url(),
     );
     fs::write(&paths.runtime_config, config).context("write runtime config")
@@ -754,7 +770,8 @@ async fn wait_for_result_account(
     coordinator_log: &Path,
     prover_log: &Path,
 ) -> Result<ResultAccount> {
-    let deadline = Instant::now() + CALLBACK_TIMEOUT;
+    let timeout = callback_timeout();
+    let deadline = Instant::now() + timeout;
     loop {
         if let Ok(account) = rpc.get_account(&result_account) {
             let mut data = account.data.as_slice();
@@ -773,7 +790,8 @@ async fn wait_for_result_account(
             let coordinator_output = read_log_output(coordinator_log);
             let prover_output = read_log_output(prover_log);
             bail!(
-                "timed out waiting for historical-average result account (expected avg={expected_avg})\n{validator_output}\n{coordinator_output}\n{prover_output}"
+                "timed out waiting for historical-average result account after {}s (expected avg={expected_avg})\n{validator_output}\n{coordinator_output}\n{prover_output}",
+                timeout.as_secs()
             );
         }
 

@@ -50,7 +50,8 @@ mod tests {
 
     use super::*;
     use crate::{
-        groth16_wrapper::wrap_stark_to_groth16, registry::FIBONACCI_ELF_PATH,
+        groth16_wrapper::wrap_stark_to_groth16,
+        registry::FIBONACCI_ELF_PATH,
         sp1_wrapper::{mock_historical_avg_proof, run_historical_avg_program, run_sp1_program},
     };
 

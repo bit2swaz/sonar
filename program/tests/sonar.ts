@@ -19,6 +19,7 @@ import { assert } from "chai";
 import { readFileSync } from "fs";
 import { join } from "path";
 import {
+  ComputeBudgetProgram,
   Keypair,
   PublicKey,
   SystemProgram,
@@ -537,6 +538,9 @@ describe("Sonar ZK Coprocessor — Phase 2.3 Integration Tests", () => {
 
       await program.methods
         .request({ requestId: Array.from(rid), computationId: Array.from(DEMO_COMPUTATION_ID), inputs: bigInputs, deadline: new anchor.BN(slot + 5000), fee: new anchor.BN(100_000) })
+        .preInstructions([
+          ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 }),
+        ])
         .accounts({ payer: provider.wallet.publicKey, callbackProgram: echoCallbackId, requestMetadata: reqPda, resultAccount: resPda, systemProgram: SystemProgram.programId })
         .rpc();
 

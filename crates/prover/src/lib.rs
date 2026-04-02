@@ -46,7 +46,7 @@ pub fn prove(
 
 #[cfg(test)]
 mod tests {
-    use std::sync::OnceLock;
+    use std::sync::{Mutex, OnceLock};
 
     use super::*;
     use crate::{
@@ -57,6 +57,7 @@ mod tests {
 
     static SP1_FIXTURE: OnceLock<(Vec<u8>, Vec<u8>, Vec<u8>)> = OnceLock::new();
     static PROVE_FIXTURE: OnceLock<(Vec<u8>, Vec<u8>, Vec<u8>)> = OnceLock::new();
+    static SP1_ENV_LOCK: Mutex<()> = Mutex::new(());
 
     fn fibonacci_input(n: u32) -> [u8; 4] {
         n.to_le_bytes()
@@ -67,6 +68,7 @@ mod tests {
     }
 
     fn sp1_fixture() -> &'static (Vec<u8>, Vec<u8>, Vec<u8>) {
+        let _guard = SP1_ENV_LOCK.lock().expect("SP1 env lock should not be poisoned");
         SP1_FIXTURE.get_or_init(|| {
             let elf = build_sp1_program(FIBONACCI_ELF_PATH).expect("fibonacci ELF should load");
             run_sp1_program(&elf, &fibonacci_input(10)).expect("SP1 run should succeed")
@@ -74,6 +76,7 @@ mod tests {
     }
 
     fn prove_fixture() -> &'static (Vec<u8>, Vec<u8>, Vec<u8>) {
+        let _guard = SP1_ENV_LOCK.lock().expect("SP1 env lock should not be poisoned");
         PROVE_FIXTURE.get_or_init(|| {
             let computation_id = fibonacci_computation_id().expect("computation id should derive");
             prove(&computation_id, &fibonacci_input(10)).expect("prove should succeed")
@@ -142,6 +145,7 @@ mod tests {
 
     #[test]
     fn test_historical_avg_mock_prover_short_circuits_heavy_proving() {
+        let _guard = SP1_ENV_LOCK.lock().expect("SP1 env lock should not be poisoned");
         let previous = std::env::var("SP1_PROVER").ok();
         std::env::set_var("SP1_PROVER", "mock");
 
@@ -166,6 +170,7 @@ mod tests {
 
     #[test]
     fn test_prove_historical_avg_mock_skips_groth16_wrap() {
+        let _guard = SP1_ENV_LOCK.lock().expect("SP1 env lock should not be poisoned");
         let previous = std::env::var("SP1_PROVER").ok();
         std::env::set_var("SP1_PROVER", "mock");
 

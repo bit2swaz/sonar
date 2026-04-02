@@ -28,6 +28,7 @@ pub fn build_sp1_program(elf_path: &str) -> anyhow::Result<Vec<u8>> {
 pub fn run_sp1_program(elf: &[u8], inputs: &[u8]) -> anyhow::Result<(Vec<u8>, Vec<u8>, Vec<u8>)> {
     let n = decode_fibonacci_input(inputs)?;
     configure_prover_environment();
+    let mock_prover = using_mock_prover();
 
     let prover = ProverClient::from_env();
     let elf = Elf::from(elf.to_vec());
@@ -44,7 +45,7 @@ pub fn run_sp1_program(elf: &[u8], inputs: &[u8]) -> anyhow::Result<(Vec<u8>, Ve
         .compressed()
         .run()
         .context("failed to generate SP1 compressed proof")?;
-    if !using_mock_prover() {
+    if !mock_prover {
         prover
             .verify(&compressed_proof, pk.verifying_key(), None)
             .context("failed to verify SP1 compressed proof")?;
@@ -55,7 +56,7 @@ pub fn run_sp1_program(elf: &[u8], inputs: &[u8]) -> anyhow::Result<(Vec<u8>, Ve
         .groth16()
         .run()
         .context("failed to generate SP1 Groth16 proof")?;
-    if !using_mock_prover() {
+    if !mock_prover {
         prover
             .verify(&groth16_proof, pk.verifying_key(), None)
             .context("failed to verify SP1 Groth16 proof")?;
@@ -84,8 +85,9 @@ pub fn run_historical_avg_program(
     let balances: Vec<u64> = bincode::deserialize(inputs)
         .context("failed to deserialize historical_avg inputs as Vec<u64>")?;
     configure_prover_environment();
+    let mock_prover = using_mock_prover();
 
-    if using_mock_prover() {
+    if mock_prover {
         let result = compute_historical_avg_result(&balances);
         let result_bytes = result.to_le_bytes().to_vec();
         return Ok((
@@ -117,7 +119,7 @@ pub fn run_historical_avg_program(
         .compressed()
         .run()
         .context("failed to generate historical_avg SP1 compressed proof")?;
-    if !using_mock_prover() {
+    if !mock_prover {
         prover
             .verify(&compressed_proof, pk.verifying_key(), None)
             .context("failed to verify historical_avg SP1 compressed proof")?;
@@ -128,7 +130,7 @@ pub fn run_historical_avg_program(
         .groth16()
         .run()
         .context("failed to generate historical_avg SP1 Groth16 proof")?;
-    if !using_mock_prover() {
+    if !mock_prover {
         prover
             .verify(&groth16_proof, pk.verifying_key(), None)
             .context("failed to verify historical_avg SP1 Groth16 proof")?;

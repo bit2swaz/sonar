@@ -38,6 +38,7 @@ const HTTP_READY_TIMEOUT: Duration = Duration::from_secs(45);
 const DEFAULT_CALLBACK_TIMEOUT: Duration = Duration::from_secs(120);
 const CI_CALLBACK_TIMEOUT: Duration = Duration::from_secs(300);
 const SEED_WAIT_TIMEOUT: Duration = Duration::from_secs(45);
+const AIRDROP_WAIT_TIMEOUT: Duration = Duration::from_secs(30);
 const REQUEST_FEE_LAMPORTS: u64 = 2_000_000;
 const VALIDATOR_DYNAMIC_PORT_COUNT: u16 = 31;
 const PORT_SCAN_START: u16 = 10_000;
@@ -822,12 +823,39 @@ fn send_transaction(
 }
 
 fn airdrop(rpc: &RpcClient, recipient: &Pubkey, lamports: u64) -> Result<()> {
+    let starting_balance = rpc
+        .get_balance(recipient)
+        .with_context(|| format!("read starting balance for {recipient}"))?;
     let signature = rpc
         .request_airdrop(recipient, lamports)
         .with_context(|| format!("airdrop {lamports} lamports to {recipient}"))?;
     rpc.confirm_transaction(&signature)
         .context("confirm airdrop transaction")?;
+
+    let expected_balance = starting_balance.saturating_add(lamports);
+    wait_for_balance(rpc, recipient, expected_balance)
+        .with_context(|| format!("wait for airdrop funds to land for {recipient}"))?;
     Ok(())
+}
+
+fn wait_for_balance(rpc: &RpcClient, recipient: &Pubkey, minimum_balance: u64) -> Result<()> {
+    let deadline = Instant::now() + AIRDROP_WAIT_TIMEOUT;
+    loop {
+        let balance = rpc
+            .get_balance(recipient)
+            .with_context(|| format!("get balance for {recipient}"))?;
+        if balance >= minimum_balance {
+            return Ok(());
+        }
+
+        if Instant::now() >= deadline {
+            bail!(
+                "timed out waiting for {recipient} to reach balance {minimum_balance}; current balance {balance}"
+            );
+        }
+
+        std::thread::sleep(Duration::from_millis(250));
+    }
 }
 
 async fn wait_for_next_slot(rpc: &RpcClient, current_slot: u64) -> Result<()> {

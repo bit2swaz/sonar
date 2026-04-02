@@ -166,7 +166,7 @@ jobs:
     name: End-to-End Historical Average
     runs-on: ubuntu-latest
     env:
-      TMPDIR: ${{ runner.temp }}/sonar-e2e
+      TMPDIR: /tmp/sonar-e2e
       SP1_PROVER: mock
 
     steps:

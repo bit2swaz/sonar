@@ -29,6 +29,7 @@ REDIS_PORT="${REDIS_PORT:-6379}"
 
 export SP1_PROVER="${SP1_PROVER:-mock}"
 KEEP_ALIVE_ON_EXIT=0
+NO_PAUSE=0
 
 mkdir -p "${LOG_DIR}" "${LEDGER_DIR}"
 cd "${ROOT_DIR}"
@@ -615,10 +616,28 @@ demo() {
 	log "proof generation appears in ${LOG_DIR}/prover.log"
 	log "callback submission / verification appears in ${LOG_DIR}/coordinator.log and ${LOG_DIR}/validator.log"
 	echo
-	read -r -p "Press enter to stop the demo stack..." _
+	if [[ "${NO_PAUSE}" != "1" ]]; then
+		read -r -p "Press enter to stop the demo stack..." _
+	fi
 }
 
-command_name="${1:-demo}"
+command_name="demo"
+
+while [[ $# -gt 0 ]]; do
+	case "$1" in
+		--no-pause)
+			NO_PAUSE=1
+			;;
+		start|request|result|status|logs|stop|demo)
+			command_name="$1"
+			;;
+		*)
+			echo "unknown argument: $1" >&2
+			exit 1
+			;;
+	esac
+	shift
+done
 
 case "${command_name}" in
 	start)
@@ -650,7 +669,7 @@ case "${command_name}" in
 		;;
 	*)
 		cat <<EOF
-Usage: $0 [start|request|result|status|logs|stop|demo]
+Usage: $0 [--no-pause] [start|request|result|status|logs|stop|demo]
 
 	start   Build, start validator + services, deploy programs, and seed demo balances
 	request Submit the historical-average request through the client program
@@ -658,7 +677,7 @@ Usage: $0 [start|request|result|status|logs|stop|demo]
 	status  Print the current demo PDAs and expected average
 	logs    Tail validator and service logs
 	stop    Stop the validator, services, and docker containers
-	demo    Run the full flow, then wait for enter before shutting down
+	demo    Run the full flow, then wait for enter before shutting down unless --no-pause is set
 EOF
 		exit 1
 		;;

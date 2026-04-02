@@ -85,6 +85,16 @@ pub fn run_historical_avg_program(
         .context("failed to deserialize historical_avg inputs as Vec<u64>")?;
     configure_prover_environment();
 
+    if using_mock_prover() {
+        let result = compute_historical_avg_result(&balances);
+        let result_bytes = result.to_le_bytes().to_vec();
+        return Ok((
+            result_bytes.clone(),
+            mock_historical_avg_proof(&result_bytes),
+            result_bytes,
+        ));
+    }
+
     let prover = ProverClient::from_env();
     let elf_obj = Elf::from(elf.to_vec());
     let pk = prover
@@ -141,11 +151,18 @@ pub fn run_historical_avg_program(
     ))
 }
 
+pub(crate) fn mock_historical_avg_proof(result_bytes: &[u8]) -> Vec<u8> {
+    let mut proof = b"historical-avg-mock-proof:".to_vec();
+    proof.extend_from_slice(result_bytes);
+    proof
+}
+
 /// Compute the integer average of `balances` — mirrors the SP1 guest logic.
 pub fn compute_historical_avg_result(balances: &[u64]) -> u64 {
     if balances.is_empty() {
         return 0;
     }
+
     let sum: u64 = balances.iter().fold(0u64, |acc, &x| acc.saturating_add(x));
     sum / balances.len() as u64
 }

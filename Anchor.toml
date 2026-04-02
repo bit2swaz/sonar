@@ -1,5 +1,5 @@
 [programs.localnet]
-sonar = "EE2sQ2VRa1hY3qjPQ1PEwuPZX6dGwTZwHMCumWrGn3sV"
+sonar_program = "EE2sQ2VRa1hY3qjPQ1PEwuPZX6dGwTZwHMCumWrGn3sV"
 echo_callback = "3RBU9G6Mws9nS8bQPg2cVRbS2v7CgsjAvv2MwmTcmbyA"
 historical_avg_client = "4iFJKn91J7zvGbaXvezVGJkpYfmC3xJdY2Er7U616G96"
 

@@ -78,15 +78,12 @@ const PUBLIC_INPUTS: Buffer[] = [
   Buffer.from([25,178,1,208,219,169,222,123,113,202,165,77,183,98,103,237,187,93,178,95,169,156,38,100,125,218,104,94,104,119,13,21]),
 ];
 
+const SONAR_PROGRAM_ID = new PublicKey("EE2sQ2VRa1hY3qjPQ1PEwuPZX6dGwTZwHMCumWrGn3sV");
+const ECHO_CALLBACK_ID = new PublicKey("3RBU9G6Mws9nS8bQPg2cVRbS2v7CgsjAvv2MwmTcmbyA");
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-function readDeployedId(name: string): PublicKey {
-  const kpPath = join(process.cwd(), "target", "deploy", `${name}-keypair.json`);
-  const raw = JSON.parse(readFileSync(kpPath, "utf8")) as number[];
-  return Keypair.fromSecretKey(Uint8Array.from(raw)).publicKey;
-}
 
 function requestPDA(programId: PublicKey, requestId: Buffer): [PublicKey, number] {
   return PublicKey.findProgramAddressSync([Buffer.from("request"), requestId], programId);
@@ -151,8 +148,8 @@ describe("Sonar ZK Coprocessor — Phase 2.3 Integration Tests", () => {
     provider = anchor.AnchorProvider.env();
     anchor.setProvider(provider);
 
-    sonarProgramId = readDeployedId("sonar_program");
-    echoCallbackId = readDeployedId("echo_callback");
+    sonarProgramId = SONAR_PROGRAM_ID;
+    echoCallbackId = ECHO_CALLBACK_ID;
 
     const idl = JSON.parse(
       readFileSync(join(process.cwd(), "target", "idl", "sonar.json"), "utf8")

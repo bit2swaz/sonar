@@ -119,17 +119,17 @@ evidence:
 implemented pieces:
 
 - `programs/historical_avg/` guest crate exists
+- `programs/historical_avg_client/` example client program exists in the workspace
 - the prover registry resolves `historical_avg`
 - the indexer serves historical balances over HTTP
 - the coordinator enriches historical-average inputs through the indexer
 - the prover can execute the historical-average guest
+- the repository now includes checked-in local e2e coverage for the historical-average flow
 
 missing pieces that keep 6.1 from complete:
 
-- the on-chain verifier registry still only knows `DEMO_COMPUTATION_ID`
-- the callback worker still passes empty `public_inputs`
-- there is no checked-in historical-average e2e test proving request to callback on-chain
-- there is no checked-in example client program for historical average requests
+- the on-chain historical-average path still relies on an MVP verifier helper rather than a fully separate production verifier rollout
+- the historical-average path is covered locally, but not yet presented as a hardened production-ready verification path
 
 ### phase 7 - testing and hardening
 
@@ -177,20 +177,21 @@ current state:
 
 the highest-value next steps visible from the codebase are:
 
-1. register non-demo verifier keys on-chain for the historical-average computation id
-2. thread real `public_inputs` through prover output, coordinator callback submission, and on-chain verification
-3. add a real historical-average end-to-end test
-4. update `config/devnet.toml` to match the current config struct
-5. replace `tests/property.rs` and `tests/integration.rs` placeholders with real phase 7 coverage
+1. replace the current historical-average MVP verifier path with a distinct production-grade verifier rollout
+2. update `config/devnet.toml` to match the current config struct
+3. replace `tests/property.rs` and `tests/integration.rs` placeholders with real phase 7 coverage
+4. expand production-facing docs and deployment guidance around the new e2e/demo coverage
+5. continue reducing config and env-var legacy surface area
 
 ## tested status snapshot
 
 the repository currently has evidence of these verified workflows:
 
 - ci runs formatting, clippy, Rust tests, cargo audit, cargo deny, Anchor build, and Anchor tests
+- ci now also runs the ignored Rust historical-average e2e test and automated demo verification
 - the program request, callback, and refund lifecycle is exercised in `program/tests/sonar.ts`
 - the indexer has database and HTTP handler tests
 - the prover has registry, wrapper, and service tests
 - the coordinator has parser, queue, and callback instruction tests
 
-the repository does not yet contain a checked-in proof that the historical-average template completes a real on-chain callback verification path.
+the repository now contains checked-in local proof that the historical-average template completes the repository's current MVP callback flow, but it does not yet represent a finished production-grade verification path.

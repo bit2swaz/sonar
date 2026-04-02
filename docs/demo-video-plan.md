@@ -1,154 +1,246 @@
-# Historical Average Demo Video Plan
+# Historical Average MVP Demo Plan
 
-This script is for a polished walkthrough of the historical-average flow that is actually implemented in the repository today.
+This version is optimized for a short no-audio screen recording for X/Twitter.
 
-What this demo proves on camera:
-- the local stack boots cleanly
-- the indexer records account history in PostgreSQL
-- the coordinator enriches the request via the indexer HTTP API
-- the prover processes the historical-average job
-- the callback transaction writes the final Sonar result account
-- the printed `historical_avg_result` matches the seeded `expected_avg`
+Goal: show that Sonar can run a historical-average request end to end across Solana, PostgreSQL, Redis, the coordinator, the prover, and the final on-chain result account.
 
-What it does not claim:
-- a production-final historical-average verifier path beyond the current MVP checks in the on-chain program
+## Recommended format
 
-## Recommended setup
+- Length: 45 to 90 seconds
+- Layout: 2 panes max
+  - left: main command terminal
+  - right: live logs terminal
+- Font: large enough to read on mobile
+- Keep every important proof point on screen for 2 to 4 seconds
+- Add short text overlays in post rather than relying on terminal commentary
 
-- Terminal 1: stack control
-- Terminal 2: live logs
-- Terminal 3: commands and narration
+## What this demo should prove visually
 
-If your machine already uses ports such as `5432`, `6379`, `8080`, or `8899`, export alternate ports first and reuse them in every command.
+- the local Sonar stack starts successfully
+- the indexer serves historical balances
+- the coordinator dispatches a prover job
+- the prover completes the historical-average computation
+- the callback lands and writes the result
+- `historical_avg_result` equals `expected_avg`
 
-## Pre-flight line
+## What not to imply
 
-Say this before you start:
+- Do not present this as a finished production verifier system.
+- Present it as the current MVP historical-average flow working end to end locally.
 
-> “This demo shows Sonar’s current verified local flow for historical-average requests: request creation, indexed balance lookup, prover execution, callback submission, and final result persistence on-chain.”
+## Best recording flow
 
-## Demo walkthrough
+### Option A — best for a clean social clip
 
-1. Terminal 1 — start the local stack
+Use the automated verifier first off-camera to make sure the environment is healthy:
 
-   $ ./scripts/demo-historical-avg.sh start
+```bash
+./scripts/verify-demo.sh
+```
 
-   Commentary:
-   - Let the audience see the script build local Rust artifacts, start PostgreSQL and Redis, boot `solana-test-validator`, and launch `sonar-indexer`, `sonar-prover`, and `sonar-coordinator`.
-   - Call out the printed `observed_pubkey`, `from_slot`, `to_slot`, and `expected_avg`.
-   - Mention that the script also seeds a real account-history window so the indexer has concrete data to serve.
+Then record the manual flow below.
 
-2. Terminal 2 — tail validator and service logs
+### Option B — fastest confidence check before posting
 
-   $ ./scripts/demo-historical-avg.sh logs
+If you want a backup clip or a self-check run:
 
-   Commentary:
-   - Keep this terminal visible throughout the request and callback sequence.
-   - Tell the audience what to watch for:
-     - validator logs with `sonar:request:` and `sonar:inputs:`
-     - coordinator logs showing request detection and dispatch
-     - prover logs showing the historical-average job being executed
-     - coordinator logs showing callback submission back to Solana
+```bash
+./scripts/demo-historical-avg.sh --no-pause demo
+```
 
-3. Terminal 3 — show seeded state and raw indexed history
+## Shot list
 
-   $ ./scripts/demo-historical-avg.sh status
-   $ curl -s "http://127.0.0.1:8080/account_history/$(python3 - <<'PY'
+### Shot 1 — opening frame
+
+On-screen text:
+
+> Sonar MVP: historical-average request → proof → callback → on-chain result
+
+Keep this on screen for 2 seconds before typing.
+
+### Shot 2 — start the stack
+
+Main terminal:
+
+```bash
+./scripts/demo-historical-avg.sh start
+```
+
+What to leave visible when it finishes:
+- `observed_pubkey`
+- `from_slot`
+- `to_slot`
+- `expected_avg`
+
+Suggested overlay:
+
+> 1. Boot local Sonar stack and seed account history
+
+### Shot 3 — open live logs
+
+Second terminal:
+
+```bash
+./scripts/demo-historical-avg.sh logs
+```
+
+Keep this running for the rest of the clip.
+
+Suggested overlay:
+
+> 2. Watch request, prover, and callback logs live
+
+### Shot 4 — show indexed history
+
+Main terminal:
+
+```bash
+./scripts/demo-historical-avg.sh status
+curl -s "http://127.0.0.1:${INDEXER_HTTP_PORT:-18080}/account_history/$(python3 - <<'PY'
 import json
 with open('.demo/historical-avg/state.json', 'r', encoding='utf-8') as fh:
-    state = json.load(fh)
+   state = json.load(fh)
 print(state['observed_pubkey'])
 PY
 )?from_slot=$(python3 - <<'PY'
 import json
 with open('.demo/historical-avg/state.json', 'r', encoding='utf-8') as fh:
-    state = json.load(fh)
+   state = json.load(fh)
 print(state['from_slot'])
 PY
 )&to_slot=$(python3 - <<'PY'
 import json
 with open('.demo/historical-avg/state.json', 'r', encoding='utf-8') as fh:
-    state = json.load(fh)
+   state = json.load(fh)
 print(state['to_slot'])
 PY
 )"
+```
 
-   Commentary:
-   - Explain that the indexer is returning the lamport history that the coordinator will convert into prover inputs.
-   - Emphasize that this is the off-chain enrichment step specific to the historical-average computation.
+Pause briefly on the returned lamport list.
 
-4. Terminal 3 — submit the historical-average request
+Suggested overlay:
 
-   $ ./scripts/demo-historical-avg.sh request
+> 3. Indexer returns the historical balances used as prover input
 
-   Commentary:
-   - Call out the printed `request_id_hex`, `request_metadata`, and `result_account` addresses.
-   - Switch attention to Terminal 2 and narrate the flow in order:
-     - the on-chain request emits logs
-     - the coordinator notices the request and fetches metadata
-     - the coordinator queries the indexer for historical balances
-     - the prover processes the job
-     - the coordinator submits the callback transaction
+### Shot 5 — submit the request
 
-5. Terminal 3 — wait for the callback and show the result
+Main terminal:
 
-   $ ./scripts/demo-historical-avg.sh result
+```bash
+./scripts/demo-historical-avg.sh request
+```
 
-   Commentary:
-   - This prints both `historical_avg_result` and `expected_avg`.
-   - Pause here and say explicitly that the end-to-end flow succeeded because the result written on-chain matches the seeded expected average.
-   - Use this as the main “proof point” moment in the video.
+Leave these visible:
+- `request_id_hex`
+- `request_metadata`
+- `result_account`
 
-6. Terminal 3 — inspect final Sonar state
+At the same time, let the logs terminal show:
+- `sonar:request:`
+- coordinator activity
+- prover activity
+- callback submission
 
-   $ ./scripts/demo-historical-avg.sh status
-   $ solana --url http://127.0.0.1:8899 account "$(python3 - <<'PY'
+Suggested overlay:
+
+> 4. Coordinator picks up the request and dispatches the prover job
+
+### Shot 6 — show the payoff moment
+
+Main terminal:
+
+```bash
+./scripts/demo-historical-avg.sh result
+```
+
+This is the most important shot in the whole video.
+
+Keep the matching lines centered on screen:
+- `historical_avg_result=...`
+- `expected_avg=...`
+
+Suggested overlay:
+
+> 5. Callback completes and the on-chain result matches the expected average
+
+Hold this frame for 3 to 4 seconds.
+
+### Shot 7 — final state check
+
+Main terminal:
+
+```bash
+./scripts/demo-historical-avg.sh status
+```
+
+Optional extra commands if the clip still has room:
+
+```bash
+solana --url http://127.0.0.1:${RPC_PORT:-18899} account "$(python3 - <<'PY'
 import json
 with open('.demo/historical-avg/state.json', 'r', encoding='utf-8') as fh:
-    state = json.load(fh)
+   state = json.load(fh)
 print(state['request_metadata'])
 PY
 )"
-   $ solana --url http://127.0.0.1:8899 account "$(python3 - <<'PY'
+solana --url http://127.0.0.1:${RPC_PORT:-18899} account "$(python3 - <<'PY'
 import json
 with open('.demo/historical-avg/state.json', 'r', encoding='utf-8') as fh:
-    state = json.load(fh)
+   state = json.load(fh)
 print(state['result_account'])
 PY
 )"
+```
 
-   Commentary:
-   - Explain that the request metadata account is no longer pending and the result account now contains the computed historical average.
-   - Be precise: this demonstrates the repository’s current MVP historical-average callback path, not a finished production verifier story.
+Suggested overlay:
 
-7. Terminal 1 — shut the stack down
+> Final Sonar PDAs are written on-chain
 
-   $ ./scripts/demo-historical-avg.sh stop
+### Shot 8 — clean teardown
 
-   Commentary:
-   - Mention that the script tears down validator, services, and Docker containers, so the flow is safe to rerun.
+Main terminal:
 
-## One-command options
+```bash
+./scripts/demo-historical-avg.sh stop
+```
 
-- For a live recorded take that still pauses before teardown:
+Suggested overlay:
 
-  $ ./scripts/demo-historical-avg.sh demo
+> Clean shutdown — safe to rerun locally
 
-  This runs the full flow, prints the result, and waits for enter before cleanup.
+## Fastest version for social media
 
-- For a non-interactive confidence check before recording:
+If you want the shortest possible cut, keep only these shots:
 
-  $ ./scripts/verify-demo.sh
+1. `start`
+2. `request`
+3. `result`
+4. `stop`
 
-  This runs the same flow automatically and exits with `VERIFICATION PASSED` only when the printed `historical_avg_result` matches `expected_avg`.
+That is enough for a compact 45 to 60 second post if the logs terminal is visible throughout.
 
-## Log callouts to capture on screen
+## Suggested overlay text sequence
 
-- Indexer history lookup and HTTP serving: `.demo/historical-avg/logs/indexer.log`
-- Proof job execution: `.demo/historical-avg/logs/prover.log`
-- Callback submission: `.demo/historical-avg/logs/coordinator.log`
-- On-chain request and callback program logs: `.demo/historical-avg/logs/validator.log`
+Use these as captions in post-production:
 
-## Suggested closing line
+1. `Boot local Sonar stack`
+2. `Seed historical account balances`
+3. `Request emitted on Solana`
+4. `Coordinator dispatches prover job`
+5. `Prover computes historical average`
+6. `Callback writes result on-chain`
+7. `Result matches expected average`
 
-> “Today’s Sonar repo already demonstrates a real local request-to-result flow for historical-average jobs across Solana, PostgreSQL, Redis, the coordinator, and the prover. The remaining work is turning this MVP verifier path into a fuller production-grade on-chain verification story.”
+## Recording tips
+
+- Run once before recording so Docker images and Rust artifacts are already warm.
+- Close noisy notifications and browser tabs.
+- Use a dark theme and a large terminal font.
+- Avoid resizing panes during the take.
+- The demo scripts now default to safer high ports: Postgres `15432`, Redis `16379`, indexer `18080`, RPC `18899`, faucet `19900`, dynamic range `20000-20030`.
+- If you still need different ports, export alternate ports before recording and keep them consistent across both terminals.
+
+## Final caption idea for the post
+
+> Sonar MVP: a historical-average request flows from Solana logs → indexer enrichment → prover job → callback → final on-chain result.

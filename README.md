@@ -20,8 +20,9 @@ the repository already includes:
 - a Redis-backed coordinator and prover pipeline
 - two registered prover computations: `fibonacci` and `historical_avg`
 - a full TypeScript integration suite for the on-chain demo verifier path
+- a checked-in Rust historical-average e2e test and an automated demo verification script
 
-the repository does not yet include a fully verified historical-average callback path on-chain. the program verifier registry still only knows the built-in demo computation id, and the callback worker still sends empty `public_inputs`.
+the repository does not yet include a production-final historical-average verifier path on-chain. the program now recognizes `HISTORICAL_AVG_COMPUTATION_ID`, the coordinator forwards prover-produced `public_inputs`, and the repository includes local end-to-end coverage for the historical-average flow, but the on-chain historical-average verification path is still an MVP-specific implementation rather than a finished production verifier story.
 
 ## high-level architecture
 
@@ -85,7 +86,7 @@ npm install
 install the Solana and Anchor versions used in the repository:
 
 ```bash
-sh -c "$(curl -sSfL https://release.anza.xyz/v2.3.13/install)"
+sh -c "$(curl -sSfL https://release.anza.xyz/v3.0.13/install)"
 cargo install anchor-cli --version 0.32.1 --locked
 ```
 
@@ -178,6 +179,7 @@ notes:
 - local tests also use the `echo_callback` helper program
 - `Anchor.toml` only defines a devnet entry for `sonar`, not for `echo_callback`
 - `config/devnet.toml` is older than the current `Config` struct and is missing `indexer.http_port` and `coordinator.indexer_url`
+- the demo scripts use safer high local ports by default: Postgres `15432`, Redis `16379`, indexer `18080`, RPC `18899`, faucet `19900`
 
 ## configuration reference
 
@@ -239,13 +241,20 @@ anchor build
 anchor test --skip-build
 ```
 
+Historical-average end-to-end flow:
+
+```bash
+SP1_PROVER=mock cargo test --test e2e_historical_avg -- --ignored --nocapture
+
+./scripts/verify-demo.sh
+```
+
 ## limitations
 
 the current repository has a few important gaps that matter when you evaluate readiness:
 
-- the on-chain verifier registry only knows the built-in demo computation id
-- the callback worker still sends empty `public_inputs`
-- the historical-average template is implemented off-chain but not yet fully wired into on-chain verification
+- the historical-average path is still an MVP verification flow rather than a finished production verifier design
+- the historical-average on-chain path currently uses a dedicated MVP verification helper rather than a fully separate production verifying-key rollout
 - `crates/sdk` is still a stub
 - `tests/integration.rs` and `tests/property.rs` are placeholders for later phases
 

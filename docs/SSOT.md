@@ -146,13 +146,14 @@ the `sonar` program implements three instructions:
 - `written_at`
 - `bump`
 
-### current verifier registry
+## current verifier registry
 
-the on-chain verifier registry only knows one computation id:
+the on-chain verifier logic currently recognizes two computation ids:
 
 - `DEMO_COMPUTATION_ID`
+- `HISTORICAL_AVG_COMPUTATION_ID`
 
-the program does not yet register or verify the `historical_avg` computation id emitted by the prover registry.
+the `historical_avg` path is still an MVP-specific verifier path rather than a finished production verifier rollout. the code currently routes `HISTORICAL_AVG_COMPUTATION_ID` into `verify_historical_avg_proof_mvp` and aliases `HISTORICAL_AVG_VERIFYING_KEY` to the demo verifying key.
 
 ## off-chain services
 
@@ -195,7 +196,7 @@ the callback worker:
 
 important current limitation:
 
-- `crates/coordinator/src/callback.rs` still sends `&[]` as `public_inputs` and labels the code path `TODO Phase 6.1: real public inputs`
+- the callback worker now forwards `response.public_inputs`, but the historical-average on-chain path is still an MVP verifier flow rather than a final production verifier implementation
 
 ### prover
 
@@ -232,10 +233,9 @@ the guest itself is simple:
 
 the current historical-average flow is only partially complete because:
 
-- the on-chain verifier registry does not register its computation id
-- the callback worker does not forward public inputs
-- there is no checked-in historical-average e2e test that proves and verifies a callback on-chain
-- there is no checked-in example client program for requesting the historical-average template
+- the on-chain historical-average path still uses an MVP verification helper rather than a final dedicated production verifier rollout
+- the repository's strongest end-to-end historical-average proof remains local/development oriented rather than a hardened production deployment path
+- `config/devnet.toml` is still out of date for the current config shape
 
 ## configuration model
 
@@ -296,6 +296,7 @@ the repository contains:
 
 - Rust unit tests across `crates/common`, `crates/coordinator`, `crates/indexer`, `crates/prover`, and `program`
 - a TypeScript integration suite in `program/tests/sonar.ts`
+- a checked-in Rust historical-average e2e test in `tests/e2e_historical_avg.rs`
 - PostgreSQL-backed indexer tests that use Docker
 - prover service tests for queue behavior and concurrency
 
@@ -311,10 +312,12 @@ the ci workflow currently runs:
 - `cargo fmt --check`
 - `cargo clippy --workspace --all-targets --all-features -- -D warnings`
 - `cargo test --workspace -- --skip integration`
+- `cargo test --test e2e_historical_avg -- --ignored --nocapture`
 - `cargo audit`
 - `cargo deny check`
 - `anchor build`
 - `anchor test --skip-build`
+- `./scripts/verify-demo.sh`
 
 ## current implementation status by phase
 
@@ -350,4 +353,4 @@ sonar currently provides a solid local and ci-tested baseline for:
 - PostgreSQL-backed historical state lookup
 - SP1-backed computation execution for registered ELFs
 
-the strongest verified path in the codebase today is still the built-in demo Groth16 path exercised by the Anchor integration tests. the historical-average path is scaffolded across the off-chain services, but it is not yet fully closed on-chain.
+the strongest on-chain verifier coverage in the codebase is still the built-in demo Groth16 path exercised by the Anchor integration tests. in addition, the repository now contains a working local historical-average MVP flow with checked-in e2e and demo verification, but that path is still not a finished production-grade verifier rollout.

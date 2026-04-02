@@ -197,9 +197,9 @@ current limitation:
 
 current limitation:
 
-- `public_inputs` are still passed as an empty vector in `process_response`
-- the source file labels this as `TODO Phase 6.1: real public inputs`
-- this blocks a real callback path for computations that require registered public inputs on-chain
+- the callback worker now forwards prover-produced `public_inputs`
+- the historical-average path still relies on an MVP verifier helper in the on-chain program rather than a final production verifier rollout
+- this means the local historical-average flow works end to end, but it should still be described as MVP-grade rather than production-final
 
 ### binary
 
@@ -318,13 +318,12 @@ these areas still rely on operator trust or unfinished wiring:
 
 - service liveness depends on the coordinator, prover, Redis, PostgreSQL, and Solana RPC availability
 - historical-average inputs are fetched by the coordinator from the indexer and are not committed on-chain before proof verification
-- the callback worker does not yet forward real public inputs
-- the on-chain verifier registry only knows the built-in demo computation id
+- the historical-average verifier path in the on-chain program is still MVP-specific rather than a finished production verifier rollout
 - there is no staking, slashing, prover admission policy, or multi-prover consensus mechanism in the codebase yet
 
 ### practical consequence
 
-sonar currently provides strong on-chain correctness guarantees for the demo Groth16 verifier path used in program tests. the broader service architecture for additional computations exists, but the historical-average template is not yet a fully verified production path from request to callback.
+sonar currently provides strong on-chain correctness guarantees for the demo Groth16 verifier path used in program tests. in addition, the repository now demonstrates a working local historical-average MVP path from request to callback, but that path is not yet a finished production verifier rollout.
 
 ## current performance-related settings
 
@@ -347,8 +346,7 @@ these are operational defaults, not guaranteed benchmarks.
 
 the following gaps are visible directly in the repository:
 
-- historical-average callback verification is not complete because the program verifier registry is still demo-only
-- the callback worker still sends empty `public_inputs`
+- historical-average callback verification is still MVP-specific and not yet presented as a final production verifier design
 - `config/devnet.toml` predates the phase 6 config shape and is missing `indexer.http_port` and `coordinator.indexer_url`
 - `tests/integration.rs` and `tests/property.rs` are placeholders for later phases
 - `crates/sdk` is still a stub and there is no checked-in ts sdk or cli

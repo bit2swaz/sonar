@@ -157,6 +157,20 @@ anchor test --skip-build
 
 the TypeScript suite in `program/tests/sonar.ts` exercises request, callback, refund, access control, and edge cases using the `echo_callback` helper program.
 
+### Historical-average end-to-end verification
+
+for the repository's current local historical-average MVP path, run:
+
+```bash
+SP1_PROVER=mock cargo test --test e2e_historical_avg -- --ignored --nocapture
+./scripts/verify-demo.sh
+```
+
+notes:
+
+- `./scripts/verify-demo.sh` now defaults to safer high local ports to avoid common clashes with existing local Postgres, Redis, or Solana services
+- the demo scripts default to Postgres `15432`, Redis `16379`, indexer `18080`, RPC `18899`, faucet `19900`, and dynamic validator ports `20000-20030`
+
 ### ignored integration placeholder
 
 ci also runs an ignored Rust integration target:

@@ -152,8 +152,12 @@ start a local validator and run the TypeScript suite:
 ```bash
 solana-test-validator --quiet &
 anchor build
-anchor test --skip-build
+anchor test
 ```
+
+avoid `--skip-build` for this suite. the full Anchor flow performs the expected build and deploy sequence, which prevents the local validator from missing the workspace programs.
+
+note: Anchor CLI `0.32.1` can emit a trailing validator-cleanup `os error 2` even when the suite body passed. CI tolerates that known cleanup quirk and checks the logged test results instead.
 
 the TypeScript suite in `program/tests/sonar.ts` exercises request, callback, refund, access control, and edge cases using the `echo_callback` helper program.
 

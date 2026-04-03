@@ -140,8 +140,10 @@ if `anchor build` fails because of the Solana platform-tools cargo version, use 
 ```bash
 cargo test --workspace -- --skip integration
 solana-test-validator --quiet &
-anchor test --skip-build
+anchor test
 ```
+
+note: Anchor CLI `0.32.1` can emit a trailing validator-cleanup `os error 2` even when the suite passes. in CI we tolerate that specific cleanup quirk and instead fail only on actual failing specs or a missing success banner.
 
 ### 6. run the services
 
@@ -238,8 +240,10 @@ Anchor tests:
 ```bash
 solana-test-validator --quiet &
 anchor build
-anchor test --skip-build
+anchor test
 ```
+
+avoid `anchor test --skip-build` here. the full test flow needs Anchor's normal build-and-deploy sequence so the local validator has the workspace programs loaded.
 
 Historical-average end-to-end flow:
 

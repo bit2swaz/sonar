@@ -52,7 +52,7 @@ from `Anchor.toml` and the on-chain code:
 
 ### localnet
 
-- `sonar = EE2sQ2VRa1hY3qjPQ1PEwuPZX6dGwTZwHMCumWrGn3sV`
+- `sonar_program = EE2sQ2VRa1hY3qjPQ1PEwuPZX6dGwTZwHMCumWrGn3sV`
 - `echo_callback = 3RBU9G6Mws9nS8bQPg2cVRbS2v7CgsjAvv2MwmTcmbyA`
 
 ### devnet
@@ -64,7 +64,7 @@ from `Anchor.toml` and the on-chain code:
 - `program/src/lib.rs` declares `EE2sQ2VRa1hY3qjPQ1PEwuPZX6dGwTZwHMCumWrGn3sV`
 - `echo_callback/src/lib.rs` declares `3RBU9G6Mws9nS8bQPg2cVRbS2v7CgsjAvv2MwmTcmbyA`
 
-the source id for `sonar` matches the localnet entry in `Anchor.toml`.
+the source id for `sonar` matches the `sonar_program` localnet entry in `Anchor.toml`.
 
 ## architecture
 
@@ -316,7 +316,7 @@ the ci workflow currently runs:
 - `cargo audit`
 - `cargo deny check`
 - `anchor build`
-- `anchor test --skip-build`
+- `anchor test` with output checks that ignore Anchor CLI's known trailing cleanup `os error 2`
 - `./scripts/verify-demo.sh`
 
 ## current implementation status by phase

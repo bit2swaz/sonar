@@ -1,7 +1,0 @@
-{
-	"libpath": "/home/bit2swaz/code/sonar/target/debug/libsonar_indexer.so",
-	"database_url": "postgres://postgres:postgres@127.0.0.1:15432/postgres",
-	"log_level": "info",
-	"max_connections": 4,
-	"batch_size": 1
-}

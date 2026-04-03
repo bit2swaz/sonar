@@ -1,0 +1,34 @@
+[network]
+rpc_url = "http://127.0.0.1:18899"
+ws_url = "ws://127.0.0.1:18900"
+chain_id = "localnet"
+
+[strategy]
+min_profit_floor_usd = 0.01
+gas_buffer_multiplier = 1.2
+max_gas_price_gwei = 1.0
+
+[rpc]
+helius_api_key = "dummy"
+helius_rpc_url = "http://127.0.0.1:18899"
+
+[indexer]
+geyser_plugin_path = "/home/bit2swaz/code/sonar/target/debug/libsonar_indexer.so"
+database_url = "postgres://postgres:postgres@127.0.0.1:15432/postgres"
+concurrency = 2
+http_port = 18080
+
+[coordinator]
+redis_url = "redis://127.0.0.1:16379"
+callback_timeout_seconds = 30
+max_concurrent_jobs = 4
+indexer_url = "http://127.0.0.1:18080"
+
+[prover]
+sp1_proving_key_path = "/tmp/sp1.key"
+groth16_params_path = "/tmp/groth16.params"
+mock_prover = true
+
+[observability]
+log_level = "info"
+metrics_port = 9090

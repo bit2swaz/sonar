@@ -93,6 +93,12 @@ function resultPDA(programId: PublicKey, requestId: Buffer): [PublicKey, number]
   return PublicKey.findProgramAddressSync([Buffer.from("result"), requestId], programId);
 }
 
+function verifierPDA(programId: PublicKey, computationId: Buffer): [PublicKey, number] {
+  return PublicKey.findProgramAddressSync([Buffer.from("verifier"), computationId], programId);
+}
+
+const VERIFIER_REGISTRY_ACCOUNT_SIZE = 8 + 32 + 32 + 128 + 1;
+
 function randomId(): Buffer {
   return Buffer.from(Keypair.generate().publicKey.toBytes());
 }
@@ -170,6 +176,40 @@ describe("Sonar ZK Coprocessor — Phase 2.3 Integration Tests", () => {
   // ==========================================================================
 
   describe("Access Control", () => {
+    it("registerVerifier creates and populates verifier registry PDA", async () => {
+      const computationId = Buffer.from(Keypair.generate().publicKey.toBytes());
+      const vkey = Buffer.from(Array.from({ length: 128 }, (_, index) => (index * 7) % 256));
+      const [verifierRegistry] = verifierPDA(sonarProgramId, computationId);
+
+      await program.methods
+        .registerVerifier({
+          computationId: Array.from(computationId),
+          vkey: Array.from(vkey),
+        })
+        .accounts({
+          authority: provider.wallet.publicKey,
+          verifierRegistry,
+          systemProgram: SystemProgram.programId,
+        })
+        .rpc();
+
+      const registry = await program.account.verifierRegistry.fetch(verifierRegistry);
+      assert.deepEqual(
+        Array.from(registry.computationId as number[]),
+        Array.from(computationId),
+        "computation_id"
+      );
+      assert.ok(
+        (registry.authority as PublicKey).equals(provider.wallet.publicKey),
+        "authority"
+      );
+      assert.deepEqual(Array.from(registry.vkey as number[]), Array.from(vkey), "vkey");
+
+      const accountInfo = await provider.connection.getAccountInfo(verifierRegistry, "confirmed");
+      assert.isNotNull(accountInfo, "verifier registry account must exist");
+      assert.strictEqual(accountInfo!.data.length, VERIFIER_REGISTRY_ACCOUNT_SIZE, "account size");
+    });
+
     it("rejects refund from a different signer (RefundPayerMismatch)", async () => {
       const rid = randomId();
       const [reqPda] = requestPDA(sonarProgramId, rid);

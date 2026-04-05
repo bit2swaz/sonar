@@ -17,9 +17,10 @@ use anchor_lang::solana_program::{
 use anchor_lang::system_program::{transfer, Transfer};
 use groth16_solana::groth16::{Groth16Verifier, Groth16Verifyingkey};
 
+mod instructions;
 mod verifier_registry;
 
-pub use verifier_registry::{DEMO_COMPUTATION_ID, HISTORICAL_AVG_COMPUTATION_ID};
+pub use verifier_registry::{VerifierRegistry, DEMO_COMPUTATION_ID, HISTORICAL_AVG_COMPUTATION_ID};
 use verifier_registry::{
     DEMO_PUBLIC_INPUTS_LEN, DEMO_VERIFYING_KEY, HISTORICAL_AVG_PUBLIC_INPUT_BYTES,
     HISTORICAL_AVG_VERIFYING_KEY,
@@ -43,6 +44,13 @@ const SONAR_CALLBACK_DISCRIMINATOR: [u8; 8] = [165, 188, 38, 190, 145, 138, 75, 
 #[program]
 pub mod sonar {
     use super::*;
+
+    pub fn register_verifier(
+        ctx: Context<RegisterVerifier>,
+        params: RegisterVerifierParams,
+    ) -> Result<()> {
+        instructions::register_verifier::handler(ctx, params)
+    }
 
     /// Submit a ZK computation request on-chain.
     pub fn request(ctx: Context<Request>, params: RequestParams) -> Result<()> {
@@ -258,6 +266,22 @@ pub struct Refund<'info> {
     pub payer: Signer<'info>,
 }
 
+#[derive(Accounts)]
+#[instruction(params: RegisterVerifierParams)]
+pub struct RegisterVerifier<'info> {
+    #[account(mut)]
+    pub authority: Signer<'info>,
+    #[account(
+        init,
+        payer = authority,
+        space = VerifierRegistry::LEN,
+        seeds = [b"verifier", params.computation_id.as_ref()],
+        bump
+    )]
+    pub verifier_registry: Account<'info, VerifierRegistry>,
+    pub system_program: Program<'info, System>,
+}
+
 #[account]
 pub struct RequestMetadata {
     pub request_id: [u8; 32],
@@ -323,6 +347,12 @@ pub struct CallbackParams {
 pub struct SonarCallbackPayload {
     pub request_id: [u8; 32],
     pub result: Vec<u8>,
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone)]
+pub struct RegisterVerifierParams {
+    pub computation_id: [u8; 32],
+    pub vkey: [u8; 128],
 }
 
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, PartialEq, Eq)]

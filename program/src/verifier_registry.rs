@@ -1,5 +1,19 @@
 use groth16_solana::groth16::Groth16Verifyingkey;
 
+use anchor_lang::prelude::*;
+
+#[account]
+pub struct VerifierRegistry {
+    pub computation_id: [u8; 32],
+    pub authority: Pubkey,
+    pub vkey: [u8; 128],
+    pub bump: u8,
+}
+
+impl VerifierRegistry {
+    pub const LEN: usize = 8 + 32 + 32 + 128 + 1;
+}
+
 pub const DEMO_COMPUTATION_ID: [u8; 32] = [
     23, 199, 119, 83, 7, 207, 206, 48, 5, 163, 228, 138, 241, 216, 145, 91, 193, 28, 25, 123, 203,
     251, 9, 53, 2, 35, 72, 231, 68, 94, 197, 56,

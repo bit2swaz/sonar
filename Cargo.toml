@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/common",
+    "crates/cli",
     "crates/indexer",
     "crates/coordinator",
     "crates/prover",

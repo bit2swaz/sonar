@@ -26,3 +26,9 @@ package_manager = "npm"
 
 [test]
 startup_wait = 15000
+
+# Pre-populate the demo verifier-registry PDA so callback tests can run
+# without hitting the transaction-size limit of register_verifier.
+[[test.validator.account]]
+address = "GLjpAkirpXsKMhBNUyzvzsCJr1A4KpYYeLRA8tBn93d7"
+filename = "program/tests/fixtures/demo_verifier_registry.json"

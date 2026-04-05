@@ -125,10 +125,8 @@ impl Metrics {
     }
 
     /// Encode all metrics in the OpenMetrics text format.
-    pub fn render(&self) -> String {
-        let mut buf = String::new();
-        encode(&mut buf, &self.registry).expect("encoding metrics should never fail");
-        buf
+    pub fn render(&self) -> anyhow::Result<String> {
+        render_registry(&self.registry)
     }
 
     /// Start a minimal HTTP server that serves `GET /metrics` on the given
@@ -144,14 +142,12 @@ impl Metrics {
 
         loop {
             let (mut stream, _) = listener.accept().await?;
-            let mut buf = String::new();
-            encode(&mut buf, &registry).expect("encoding metrics should never fail");
+            let body = render_registry(&registry)?;
 
             // Read and discard the incoming HTTP request.
             let mut req = [0u8; 1024];
             let _ = stream.read(&mut req).await;
 
-            let body = buf;
             let response = format!(
                 "HTTP/1.1 200 OK\r\nContent-Type: \
                  application/openmetrics-text; version=1.0.0; charset=utf-8\r\n\
@@ -162,6 +158,12 @@ impl Metrics {
             stream.write_all(response.as_bytes()).await?;
         }
     }
+}
+
+fn render_registry(registry: &Registry) -> anyhow::Result<String> {
+    let mut buf = String::new();
+    encode(&mut buf, registry).context("failed to encode Prometheus metrics")?;
+    Ok(buf)
 }
 
 // ---------------------------------------------------------------------------
@@ -175,7 +177,7 @@ mod tests {
     #[test]
     fn test_metrics_new_registers_all() {
         let m = Metrics::new().unwrap();
-        let rendered = m.render();
+        let rendered = m.render().unwrap();
         for name in &[
             "sonar_requests_submitted",
             "sonar_proofs_verified",
@@ -199,7 +201,7 @@ mod tests {
         m.requests_submitted.inc();
         m.requests_submitted.inc();
         m.requests_submitted.inc();
-        let rendered = m.render();
+        let rendered = m.render().unwrap();
         // OpenMetrics appends _total to counter names.
         assert!(
             rendered.contains("sonar_requests_submitted_total 3"),
@@ -213,7 +215,7 @@ mod tests {
         let label = vec![("reason".to_owned(), "InvalidProof".to_owned())];
         m.proofs_failed.get_or_create(&label).inc();
         m.proofs_failed.get_or_create(&label).inc();
-        let rendered = m.render();
+        let rendered = m.render().unwrap();
         assert!(
             rendered.contains("InvalidProof"),
             "Expected label 'InvalidProof' in:\n{rendered}"
@@ -228,7 +230,7 @@ mod tests {
     fn test_histogram_record() {
         let m = Metrics::new().unwrap();
         m.request_latency_seconds.observe(1.5);
-        let rendered = m.render();
+        let rendered = m.render().unwrap();
         assert!(
             rendered.contains("sonar_request_latency_seconds"),
             "Expected histogram in:\n{rendered}"
@@ -239,7 +241,7 @@ mod tests {
     fn test_gauge_set() {
         let m = Metrics::new().unwrap();
         m.prover_utilization.set(0.75);
-        let rendered = m.render();
+        let rendered = m.render().unwrap();
         assert!(
             rendered.contains("sonar_prover_utilization"),
             "Expected gauge in:\n{rendered}"

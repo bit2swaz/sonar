@@ -10,15 +10,11 @@
 #![no_main]
 sp1_zkvm::entrypoint!(main);
 
+use historical_avg_program::compute_historical_avg_result;
+
 pub fn main() {
     let balances: Vec<u64> = sp1_zkvm::io::read();
-
-    let avg: u64 = if balances.is_empty() {
-        0
-    } else {
-        let sum: u64 = balances.iter().fold(0u64, |acc, &x| acc.saturating_add(x));
-        sum / balances.len() as u64
-    };
+    let avg = compute_historical_avg_result(&balances);
 
     sp1_zkvm::io::commit(&avg);
 }

@@ -165,4 +165,27 @@ mod tests {
 
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     }
+
+    #[tokio::test]
+    async fn test_closed_pool_returns_500() {
+        let pool =
+            sqlx::PgPool::connect_lazy("postgres://localhost/sonar_test").expect("lazy pool");
+        pool.close().await;
+        let app = build_router(pool);
+        let valid_pubkey = bs58::encode([7u8; 32]).into_string();
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri(format!(
+                        "/account_history/{valid_pubkey}?from_slot=0&to_slot=100"
+                    ))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
 }

@@ -63,7 +63,15 @@ pub async fn pop_response<C: AsyncCommands>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
+
+    use redis::AsyncCommands;
     use sonar_common::types::Pubkey;
+    use testcontainers::{
+        core::{IntoContainerPort, WaitFor},
+        runners::AsyncRunner,
+        GenericImage, ImageExt,
+    };
 
     fn sample_job() -> ProverJob {
         ProverJob {
@@ -116,5 +124,88 @@ mod tests {
         let json = serde_json::to_string(&job).unwrap();
         let decoded: ProverJob = serde_json::from_str(&json).unwrap();
         assert!(decoded.inputs.is_empty());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn pop_response_returns_none_after_timeout() {
+        let redis = GenericImage::new("redis", "7.2.4")
+            .with_exposed_port(6379.tcp())
+            .with_wait_for(WaitFor::message_on_stdout("Ready to accept connections"))
+            .with_startup_timeout(Duration::from_secs(60))
+            .start()
+            .await
+            .expect("redis testcontainer should start");
+
+        let redis_url = format!(
+            "redis://{}:{}",
+            redis.get_host().await.expect("redis host"),
+            redis
+                .get_host_port_ipv4(6379.tcp())
+                .await
+                .expect("redis mapped port")
+        );
+
+        let client = redis::Client::open(redis_url.as_str()).expect("redis client should build");
+        let mut connection = client
+            .get_multiplexed_async_connection()
+            .await
+            .expect("redis connection should open");
+
+        let queue = "sonar:responses:timeout-test";
+        let _: () = connection
+            .del(queue)
+            .await
+            .expect("queue cleanup should succeed");
+
+        let response = pop_response(&mut connection, queue, 0.1)
+            .await
+            .expect("BLPOP timeout should not fail");
+
+        assert!(response.is_none());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn pop_response_rejects_malformed_payload() {
+        let redis = GenericImage::new("redis", "7.2.4")
+            .with_exposed_port(6379.tcp())
+            .with_wait_for(WaitFor::message_on_stdout("Ready to accept connections"))
+            .with_startup_timeout(Duration::from_secs(60))
+            .start()
+            .await
+            .expect("redis testcontainer should start");
+
+        let redis_url = format!(
+            "redis://{}:{}",
+            redis.get_host().await.expect("redis host"),
+            redis
+                .get_host_port_ipv4(6379.tcp())
+                .await
+                .expect("redis mapped port")
+        );
+
+        let client = redis::Client::open(redis_url.as_str()).expect("redis client should build");
+        let mut connection = client
+            .get_multiplexed_async_connection()
+            .await
+            .expect("redis connection should open");
+
+        let queue = "sonar:responses:malformed-test";
+        let _: () = connection
+            .del(queue)
+            .await
+            .expect("queue cleanup should succeed");
+        connection
+            .rpush::<_, _, ()>(queue, "{definitely-not-json")
+            .await
+            .expect("malformed response should enqueue");
+
+        let error = pop_response(&mut connection, queue, 1.0)
+            .await
+            .expect_err("malformed payload should fail deserialization");
+
+        assert!(
+            error.to_string().contains("deserialise ProverResponse"),
+            "unexpected error: {error:#}"
+        );
     }
 }

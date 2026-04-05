@@ -17,13 +17,10 @@ use anchor_lang::solana_program::{
 use anchor_lang::system_program::{transfer, Transfer};
 use groth16_solana::groth16::{Groth16Verifier, Groth16Verifyingkey};
 
+mod instructions;
 mod verifier_registry;
 
-pub use verifier_registry::{DEMO_COMPUTATION_ID, HISTORICAL_AVG_COMPUTATION_ID};
-use verifier_registry::{
-    DEMO_PUBLIC_INPUTS_LEN, DEMO_VERIFYING_KEY, HISTORICAL_AVG_PUBLIC_INPUT_BYTES,
-    HISTORICAL_AVG_VERIFYING_KEY,
-};
+pub use verifier_registry::{VerifierRegistry, DEMO_COMPUTATION_ID, HISTORICAL_AVG_COMPUTATION_ID};
 
 declare_id!("EE2sQ2VRa1hY3qjPQ1PEwuPZX6dGwTZwHMCumWrGn3sV");
 
@@ -43,6 +40,20 @@ const SONAR_CALLBACK_DISCRIMINATOR: [u8; 8] = [165, 188, 38, 190, 145, 138, 75, 
 #[program]
 pub mod sonar {
     use super::*;
+
+    pub fn register_verifier(
+        ctx: Context<RegisterVerifier>,
+        params: RegisterVerifierParams,
+    ) -> Result<()> {
+        instructions::register_verifier::handler(ctx, params)
+    }
+
+    pub fn update_verifier(
+        ctx: Context<UpdateVerifier>,
+        params: RegisterVerifierParams,
+    ) -> Result<()> {
+        instructions::update_verifier::handler(ctx, params)
+    }
 
     /// Submit a ZK computation request on-chain.
     pub fn request(ctx: Context<Request>, params: RequestParams) -> Result<()> {
@@ -128,7 +139,7 @@ pub mod sonar {
             ErrorCode::AlreadyCompleted
         );
 
-        verify_groth16_proof(request_metadata, &params)?;
+        verify_groth16_proof(&ctx.accounts.verifier_registry, &params)?;
 
         require!(
             params.result.len() <= MAX_RESULT_BYTES,
@@ -236,6 +247,12 @@ pub struct Callback<'info> {
         bump = result_account.bump,
     )]
     pub result_account: Account<'info, ResultAccount>,
+    #[account(
+        seeds = [b"verifier", request_metadata.computation_id.as_ref()],
+        bump = verifier_registry.bump,
+        constraint = verifier_registry.computation_id == request_metadata.computation_id @ ErrorCode::UnknownComputationId,
+    )]
+    pub verifier_registry: Account<'info, VerifierRegistry>,
     #[account(mut)]
     pub prover: Signer<'info>,
     /// CHECK: Validated against request metadata via `has_one`.
@@ -256,6 +273,43 @@ pub struct Refund<'info> {
     pub request_metadata: Account<'info, RequestMetadata>,
     #[account(mut)]
     pub payer: Signer<'info>,
+}
+
+#[derive(Accounts)]
+#[instruction(params: RegisterVerifierParams)]
+pub struct RegisterVerifier<'info> {
+    #[account(mut)]
+    pub authority: Signer<'info>,
+    #[account(
+        init,
+        payer = authority,
+        space = VerifierRegistry::space_for(params.vk_ic.len()),
+        seeds = [b"verifier", params.computation_id.as_ref()],
+        bump
+    )]
+    pub verifier_registry: Account<'info, VerifierRegistry>,
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+#[instruction(params: RegisterVerifierParams)]
+pub struct UpdateVerifier<'info> {
+    /// Must match the authority stored in the existing registry.
+    pub authority: Signer<'info>,
+    #[account(
+        mut,
+        seeds = [b"verifier", verifier_registry.computation_id.as_ref()],
+        bump = verifier_registry.bump,
+        has_one = authority @ ErrorCode::VerifierAuthorityMismatch,
+        realloc = VerifierRegistry::space_for(params.vk_ic.len()),
+        realloc::payer = payer,
+        realloc::zero = false,
+    )]
+    pub verifier_registry: Account<'info, VerifierRegistry>,
+    /// Pays for any additional rent when the account grows.
+    #[account(mut)]
+    pub payer: Signer<'info>,
+    pub system_program: Program<'info, System>,
 }
 
 #[account]
@@ -325,6 +379,16 @@ pub struct SonarCallbackPayload {
     pub result: Vec<u8>,
 }
 
+#[derive(AnchorSerialize, AnchorDeserialize, Clone)]
+pub struct RegisterVerifierParams {
+    pub computation_id: [u8; 32],
+    pub vk_alpha_g1: [u8; 64],
+    pub vk_beta_g2: [u8; 128],
+    pub vk_gamme_g2: [u8; 128],
+    pub vk_delta_g2: [u8; 128],
+    pub vk_ic: Vec<[u8; 64]>,
+}
+
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, PartialEq, Eq)]
 pub enum RequestStatus {
     Pending,
@@ -332,47 +396,41 @@ pub enum RequestStatus {
     Refunded,
 }
 
-fn verify_groth16_proof(request_metadata: &RequestMetadata, params: &CallbackParams) -> Result<()> {
-    match request_metadata.computation_id {
-        DEMO_COMPUTATION_ID => {
-            verify_with_key::<DEMO_PUBLIC_INPUTS_LEN>(&DEMO_VERIFYING_KEY, params)
-        },
-        HISTORICAL_AVG_COMPUTATION_ID => {
-            verify_historical_avg_proof_mvp(&HISTORICAL_AVG_VERIFYING_KEY, params)
-        },
-        _ => Err(error!(ErrorCode::UnknownComputationId)),
+#[inline(never)]
+fn verify_groth16_proof(
+    verifier_registry: &VerifierRegistry,
+    params: &CallbackParams,
+) -> Result<()> {
+    let verifying_key = verifier_registry.groth16_verifying_key();
+    let public_inputs_len = verifier_registry
+        .public_inputs_len()
+        .ok_or_else(|| error!(ErrorCode::InvalidVerifierKey))?;
+
+    match public_inputs_len {
+        0 => verify_with_key::<0>(&verifying_key, params),
+        1 => verify_with_key::<1>(&verifying_key, params),
+        2 => verify_with_key::<2>(&verifying_key, params),
+        3 => verify_with_key::<3>(&verifying_key, params),
+        4 => verify_with_key::<4>(&verifying_key, params),
+        5 => verify_with_key::<5>(&verifying_key, params),
+        6 => verify_with_key::<6>(&verifying_key, params),
+        7 => verify_with_key::<7>(&verifying_key, params),
+        8 => verify_with_key::<8>(&verifying_key, params),
+        9 => verify_with_key::<9>(&verifying_key, params),
+        10 => verify_with_key::<10>(&verifying_key, params),
+        11 => verify_with_key::<11>(&verifying_key, params),
+        12 => verify_with_key::<12>(&verifying_key, params),
+        13 => verify_with_key::<13>(&verifying_key, params),
+        14 => verify_with_key::<14>(&verifying_key, params),
+        15 => verify_with_key::<15>(&verifying_key, params),
+        16 => verify_with_key::<16>(&verifying_key, params),
+        _ => Err(error!(ErrorCode::UnsupportedVerifierPublicInputsLength)),
     }
 }
 
-fn verify_historical_avg_proof_mvp(
-    _verifying_key: &Groth16Verifyingkey<'static>,
-    params: &CallbackParams,
-) -> Result<()> {
-    require!(!params.proof.is_empty(), ErrorCode::InvalidProofLength);
-    require!(
-        params.public_inputs.len() == 1,
-        ErrorCode::InvalidPublicInputsLength
-    );
-
-    let public_input = &params.public_inputs[0];
-    require!(
-        public_input.len() == HISTORICAL_AVG_PUBLIC_INPUT_BYTES,
-        ErrorCode::InvalidHistoricalAvgPublicInputSize
-    );
-    require!(
-        params.result.len() == HISTORICAL_AVG_PUBLIC_INPUT_BYTES,
-        ErrorCode::InvalidHistoricalAvgResultSize
-    );
-    require!(
-        public_input.as_slice() == params.result.as_slice(),
-        ErrorCode::HistoricalAvgPublicInputMismatch
-    );
-
-    Ok(())
-}
-
+#[inline(never)]
 fn verify_with_key<const N: usize>(
-    verifying_key: &Groth16Verifyingkey<'static>,
+    verifying_key: &Groth16Verifyingkey<'_>,
     params: &CallbackParams,
 ) -> Result<()> {
     let proof_bytes: [u8; GROTH16_PROOF_BYTES] = params
@@ -402,6 +460,7 @@ fn verify_with_key<const N: usize>(
         .map_err(|_| error!(ErrorCode::ProofVerificationFailed))
 }
 
+#[inline(never)]
 fn parse_public_inputs<const N: usize>(public_inputs: &[Vec<u8>]) -> Result<[[u8; 32]; N]> {
     require!(
         public_inputs.len() == N,
@@ -530,18 +589,20 @@ pub enum ErrorCode {
     RefundPayerMismatch,
     #[msg("No verifier is registered for this computation ID")]
     UnknownComputationId,
+    #[msg("Stored verifier key is invalid")]
+    InvalidVerifierKey,
+    #[msg("Verifier key has too many public inputs (maximum 16)")]
+    VerifierKeyTooManyPublicInputs,
+    #[msg("Signer is not the registered authority for this verifier")]
+    VerifierAuthorityMismatch,
+    #[msg("Verifier public-input length is not supported by the on-chain dispatcher")]
+    UnsupportedVerifierPublicInputsLength,
     #[msg("Groth16 proof length is invalid")]
     InvalidProofLength,
     #[msg("Public inputs length is invalid for the configured verifier")]
     InvalidPublicInputsLength,
     #[msg("Each public input must be exactly 32 bytes")]
     InvalidPublicInputSize,
-    #[msg("Historical-average public input must be exactly 8 bytes")]
-    InvalidHistoricalAvgPublicInputSize,
-    #[msg("Historical-average result must be exactly 8 bytes")]
-    InvalidHistoricalAvgResultSize,
-    #[msg("Historical-average public input must match the returned result")]
-    HistoricalAvgPublicInputMismatch,
     #[msg("Result payload exceeds the configured size limit")]
     ResultTooLarge,
     #[msg("Lamport arithmetic overflowed")]
@@ -566,29 +627,47 @@ mod tests {
     }
 
     #[test]
-    fn historical_avg_verifier_accepts_matching_result_binding() {
-        verify_historical_avg_proof_mvp(
-            &HISTORICAL_AVG_VERIFYING_KEY,
-            &CallbackParams {
-                proof: vec![1u8; 32],
-                public_inputs: vec![vec![7u8; 8]],
-                result: vec![7u8; 8],
-            },
-        )
-        .unwrap();
+    fn verifier_registry_reconstructs_groth16_key() {
+        let registry = VerifierRegistry {
+            computation_id: DEMO_COMPUTATION_ID,
+            authority: Pubkey::default(),
+            vk_alpha_g1: verifier_registry::DEMO_VERIFYING_KEY.vk_alpha_g1,
+            vk_beta_g2: verifier_registry::DEMO_VERIFYING_KEY.vk_beta_g2,
+            vk_gamme_g2: verifier_registry::DEMO_VERIFYING_KEY.vk_gamme_g2,
+            vk_delta_g2: verifier_registry::DEMO_VERIFYING_KEY.vk_delta_g2,
+            vk_ic: verifier_registry::DEMO_VERIFYING_KEY.vk_ic.to_vec(),
+            bump: 255,
+        };
+
+        let key = registry.groth16_verifying_key();
+        assert_eq!(
+            key.nr_pubinputs,
+            verifier_registry::DEMO_VERIFYING_KEY.nr_pubinputs
+        );
+        assert_eq!(
+            key.vk_alpha_g1,
+            verifier_registry::DEMO_VERIFYING_KEY.vk_alpha_g1
+        );
+        assert_eq!(
+            key.vk_beta_g2,
+            verifier_registry::DEMO_VERIFYING_KEY.vk_beta_g2
+        );
+        assert_eq!(
+            key.vk_gamme_g2,
+            verifier_registry::DEMO_VERIFYING_KEY.vk_gamme_g2
+        );
+        assert_eq!(
+            key.vk_delta_g2,
+            verifier_registry::DEMO_VERIFYING_KEY.vk_delta_g2
+        );
+        assert_eq!(key.vk_ic, verifier_registry::DEMO_VERIFYING_KEY.vk_ic);
     }
 
     #[test]
-    fn historical_avg_verifier_rejects_mismatched_result_binding() {
-        let err = verify_historical_avg_proof_mvp(
-            &HISTORICAL_AVG_VERIFYING_KEY,
-            &CallbackParams {
-                proof: vec![1u8; 32],
-                public_inputs: vec![vec![7u8; 8]],
-                result: vec![8u8; 8],
-            },
-        )
-        .unwrap_err();
-        assert_eq!(err, error!(ErrorCode::HistoricalAvgPublicInputMismatch));
+    fn verifier_registry_space_matches_layout() {
+        assert_eq!(
+            VerifierRegistry::space_for(10),
+            8 + 32 + 32 + 64 + 128 + 128 + 128 + 4 + (10 * 64) + 1
+        );
     }
 }

@@ -14,8 +14,14 @@
  */
 
 import * as anchor from "@coral-xyz/anchor";
-import { AnchorError } from "@coral-xyz/anchor";
+import {
+  AnchorError,
+  BorshAccountsCoder,
+  BorshInstructionCoder,
+  type Idl,
+} from "@coral-xyz/anchor";
 import { assert } from "chai";
+import { createHash } from "crypto";
 import { readFileSync } from "fs";
 import { join } from "path";
 import {
@@ -24,7 +30,14 @@ import {
   PublicKey,
   SystemProgram,
   LAMPORTS_PER_SOL,
+  Transaction,
+  TransactionInstruction,
 } from "@solana/web3.js";
+import {
+  startAnchor,
+  type BanksTransactionResultWithMeta,
+  type ProgramTestContext,
+} from "solana-bankrun";
 
 // ---------------------------------------------------------------------------
 // Groth16 fixture — from groth16-solana v0.2.0 built-in demo circuit
@@ -81,6 +94,42 @@ const PUBLIC_INPUTS: Buffer[] = [
 const SONAR_PROGRAM_ID = new PublicKey("EE2sQ2VRa1hY3qjPQ1PEwuPZX6dGwTZwHMCumWrGn3sV");
 const ECHO_CALLBACK_ID = new PublicKey("3RBU9G6Mws9nS8bQPg2cVRbS2v7CgsjAvv2MwmTcmbyA");
 
+type DemoVerifyingKeyFixture = {
+  vkAlphaG1: number[];
+  vkBetaG2: number[];
+  vkGammeG2: number[];
+  vkDeltaG2: number[];
+  vkIc: number[][];
+};
+
+const DEMO_VERIFYING_KEY = JSON.parse(
+  readFileSync(
+    join(process.cwd(), "program", "tests", "fixtures", "demo_verifying_key.json"),
+    "utf8"
+  )
+) as DemoVerifyingKeyFixture;
+
+// A minimal 1-public-input verifying key (2 vk_ic entries × 64 bytes each).
+// Used for PDA-creation tests where proof verification is not exercised,
+// keeping the register_verifier instruction small enough to fit in a single
+// Solana transaction (< 1232 bytes).
+const MINIMAL_VERIFYING_KEY: DemoVerifyingKeyFixture = {
+  vkAlphaG1: Array(64).fill(1),
+  vkBetaG2: Array(128).fill(2),
+  vkGammeG2: Array(128).fill(3),
+  vkDeltaG2: Array(128).fill(4),
+  vkIc: [Array(64).fill(5), Array(64).fill(6)],
+};
+
+const SONAR_IDL = JSON.parse(
+  readFileSync(join(process.cwd(), "target", "idl", "sonar.json"), "utf8")
+) as Idl;
+// BorshInstructionCoder and BorshAccountsCoder convert the IDL to camelCase
+// internally, so passing the raw IDL from disk is correct and avoids depending
+// on the private `convertIdlToCamelCase` export.
+const SONAR_INSTRUCTION_CODER = new BorshInstructionCoder(SONAR_IDL);
+const SONAR_ACCOUNTS_CODER = new BorshAccountsCoder(SONAR_IDL);
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -93,8 +142,49 @@ function resultPDA(programId: PublicKey, requestId: Buffer): [PublicKey, number]
   return PublicKey.findProgramAddressSync([Buffer.from("result"), requestId], programId);
 }
 
+function verifierPDA(programId: PublicKey, computationId: Buffer): [PublicKey, number] {
+  return PublicKey.findProgramAddressSync([Buffer.from("verifier"), computationId], programId);
+}
+
+function verifierRegistryAccountSize(vkIcLen: number): number {
+  return 8 + 32 + 32 + 64 + 128 + 128 + 128 + 4 + vkIcLen * 64 + 1;
+}
+
 function randomId(): Buffer {
   return Buffer.from(Keypair.generate().publicKey.toBytes());
+}
+
+function anchorDiscriminator(name: string): Buffer {
+  return createHash("sha256").update(`global:${name}`).digest().subarray(0, 8);
+}
+
+function encodeRegisterVerifierData(
+  computationId: Buffer,
+  verifyingKey: DemoVerifyingKeyFixture
+): Buffer {
+  assert.lengthOf(computationId, 32, "computationId must be 32 bytes");
+
+  const encodeFixed = (values: number[], expectedLength: number, field: string): Buffer => {
+    assert.lengthOf(values, expectedLength, `${field} must be ${expectedLength} bytes`);
+    return Buffer.from(values);
+  };
+
+  const vkIc = verifyingKey.vkIc.map((row, index) =>
+    encodeFixed(row, 64, `vkIc[${index}]`)
+  );
+  const vkIcLength = Buffer.alloc(4);
+  vkIcLength.writeUInt32LE(vkIc.length, 0);
+
+  return Buffer.concat([
+    anchorDiscriminator("register_verifier"),
+    computationId,
+    encodeFixed(verifyingKey.vkAlphaG1, 64, "vkAlphaG1"),
+    encodeFixed(verifyingKey.vkBetaG2, 128, "vkBetaG2"),
+    encodeFixed(verifyingKey.vkGammeG2, 128, "vkGammeG2"),
+    encodeFixed(verifyingKey.vkDeltaG2, 128, "vkDeltaG2"),
+    vkIcLength,
+    ...vkIc,
+  ]);
 }
 
 function sleep(ms: number): Promise<void> {
@@ -133,6 +223,119 @@ async function expectError(fn: () => Promise<unknown>, code: string): Promise<vo
   }
 }
 
+function buildBankrunRequestInstruction(
+  payer: PublicKey,
+  requestMetadata: PublicKey,
+  resultAccount: PublicKey,
+  requestId: Buffer,
+  deadline: bigint,
+  fee: bigint
+): TransactionInstruction {
+  return new TransactionInstruction({
+    programId: SONAR_PROGRAM_ID,
+    keys: [
+      { pubkey: payer, isSigner: true, isWritable: true },
+      { pubkey: ECHO_CALLBACK_ID, isSigner: false, isWritable: false },
+      { pubkey: requestMetadata, isSigner: false, isWritable: true },
+      { pubkey: resultAccount, isSigner: false, isWritable: true },
+      { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+    ],
+    data: SONAR_INSTRUCTION_CODER.encode("request", {
+      params: {
+        requestId: Array.from(requestId),
+        computationId: Array.from(DEMO_COMPUTATION_ID),
+        inputs: Buffer.alloc(0),
+        deadline: new anchor.BN(deadline.toString()),
+        fee: new anchor.BN(fee.toString()),
+      },
+    }),
+  });
+}
+
+function buildBankrunRefundInstruction(
+  payer: PublicKey,
+  requestMetadata: PublicKey
+): TransactionInstruction {
+  return new TransactionInstruction({
+    programId: SONAR_PROGRAM_ID,
+    keys: [
+      { pubkey: requestMetadata, isSigner: false, isWritable: true },
+      { pubkey: payer, isSigner: true, isWritable: true },
+    ],
+    data: SONAR_INSTRUCTION_CODER.encode("refund", {}),
+  });
+}
+
+async function buildBankrunTransaction(
+  context: ProgramTestContext,
+  instructions: TransactionInstruction[],
+  signers: Keypair[]
+): Promise<Transaction> {
+  const latestBlockhash = await context.banksClient.getLatestBlockhash();
+  assert.isNotNull(latestBlockhash, "bankrun should provide a recent blockhash");
+
+  const [recentBlockhash] = latestBlockhash!;
+  const transaction = new Transaction({
+    feePayer: signers[0].publicKey,
+    recentBlockhash,
+  });
+  transaction.add(...instructions);
+  transaction.sign(...signers);
+  return transaction;
+}
+
+async function processBankrunTransaction(
+  context: ProgramTestContext,
+  instructions: TransactionInstruction[],
+  signers: Keypair[]
+) {
+  const transaction = await buildBankrunTransaction(context, instructions, signers);
+  const meta = await context.banksClient.processTransaction(transaction);
+  return { transaction, meta };
+}
+
+async function tryProcessBankrunTransaction(
+  context: ProgramTestContext,
+  instructions: TransactionInstruction[],
+  signers: Keypair[]
+): Promise<BanksTransactionResultWithMeta> {
+  const transaction = await buildBankrunTransaction(context, instructions, signers);
+  return context.banksClient.tryProcessTransaction(transaction);
+}
+
+function expectBankrunError(
+  result: BanksTransactionResultWithMeta,
+  code: string
+): void {
+  const diagnostics = [result.result ?? "", ...(result.meta?.logMessages ?? [])].join("\n");
+  assert.isNotNull(result.result, `Expected \"${code}\" but transaction succeeded`);
+  assert.include(
+    diagnostics,
+    code,
+    `Expected bankrun failure to contain \"${code}\", got: ${diagnostics}`
+  );
+}
+
+function hasStatusVariant(status: object, variant: string): boolean {
+  return variant in status || `${variant[0].toLowerCase()}${variant.slice(1)}` in status;
+}
+
+async function fetchBankrunRequestMetadata(
+  context: ProgramTestContext,
+  requestMetadata: PublicKey
+) {
+  const account = await context.banksClient.getAccount(requestMetadata);
+  assert.isNotNull(account, "request metadata account should exist");
+  return SONAR_ACCOUNTS_CODER.decode(
+    "requestMetadata",
+    Buffer.from(account!.data)
+  ) as {
+    status: object;
+    completedAt?: anchor.BN | null;
+    completed_at?: anchor.BN | null;
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Test suite
 // ---------------------------------------------------------------------------
@@ -143,6 +346,7 @@ describe("Sonar ZK Coprocessor — Phase 2.3 Integration Tests", () => {
   let sonarProgramId: PublicKey;
   let echoCallbackId: PublicKey;
   let provider: anchor.AnchorProvider;
+  let demoVerifierRegistry: PublicKey;
 
   before(async () => {
     provider = anchor.AnchorProvider.env();
@@ -151,25 +355,109 @@ describe("Sonar ZK Coprocessor — Phase 2.3 Integration Tests", () => {
     sonarProgramId = SONAR_PROGRAM_ID;
     echoCallbackId = ECHO_CALLBACK_ID;
 
-    const idl = JSON.parse(
-      readFileSync(join(process.cwd(), "target", "idl", "sonar.json"), "utf8")
-    );
     // Anchor v0.32: constructor is (idl, provider?, coder?) — program ID comes
     // from idl.address. Passing a PublicKey as the second arg was wrong.
-    program = new anchor.Program(idl, provider);
+    program = new anchor.Program(SONAR_IDL, provider);
 
     const sig = await provider.connection.requestAirdrop(
       provider.wallet.publicKey,
       20 * LAMPORTS_PER_SOL
     );
     await provider.connection.confirmTransaction(sig, "confirmed");
+
+    [demoVerifierRegistry] = verifierPDA(sonarProgramId, DEMO_COMPUTATION_ID);
   });
+
+  async function ensureDemoVerifierRegisteredOrSkip(_testContext: Mocha.Context): Promise<void> {
+    await ensureVerifierRegistered(demoVerifierRegistry, DEMO_COMPUTATION_ID);
+  }
+
+  async function ensureVerifierRegistered(
+    verifierRegistry: PublicKey,
+    computationId: Buffer,
+    verifyingKey: DemoVerifyingKeyFixture = DEMO_VERIFYING_KEY
+  ): Promise<PublicKey> {
+    const existing = await provider.connection.getAccountInfo(verifierRegistry, "confirmed");
+    if (existing !== null) {
+      return verifierRegistry;
+    }
+
+    const instruction = new TransactionInstruction({
+      programId: sonarProgramId,
+      keys: [
+        { pubkey: provider.wallet.publicKey, isSigner: true, isWritable: true },
+        { pubkey: verifierRegistry, isSigner: false, isWritable: true },
+        { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+      ],
+      data: encodeRegisterVerifierData(computationId, verifyingKey),
+    });
+
+    await provider.sendAndConfirm(new Transaction().add(instruction), []);
+
+    return verifierRegistry;
+  }
 
   // ==========================================================================
   // ACCESS CONTROL (3 tests)
   // ==========================================================================
 
   describe("Access Control", () => {
+    it("registerVerifier creates and populates verifier registry PDA", async function () {
+      const computationId = Buffer.from(Keypair.generate().publicKey.toBytes());
+      const [verifierRegistry] = verifierPDA(sonarProgramId, computationId);
+      // Use the minimal 2-entry fixture so the instruction data stays below the
+      // 1232-byte Solana transaction limit.  This test only exercises PDA
+      // creation and field storage; proof-verification coverage is provided by
+      // the Callback Flow suite using the pre-populated demo registry.
+      const minimalKey = MINIMAL_VERIFYING_KEY;
+
+      await ensureVerifierRegistered(verifierRegistry, computationId, minimalKey);
+
+      const registry = await program.account.verifierRegistry.fetch(verifierRegistry);
+      assert.deepEqual(
+        Array.from(registry.computationId as number[]),
+        Array.from(computationId),
+        "computation_id"
+      );
+      assert.ok(
+        (registry.authority as PublicKey).equals(provider.wallet.publicKey),
+        "authority"
+      );
+      assert.deepEqual(
+        Array.from(registry.vkAlphaG1 as number[]),
+        minimalKey.vkAlphaG1,
+        "vk_alpha_g1"
+      );
+      assert.deepEqual(
+        Array.from(registry.vkBetaG2 as number[]),
+        minimalKey.vkBetaG2,
+        "vk_beta_g2"
+      );
+      assert.deepEqual(
+        Array.from(registry.vkGammeG2 as number[]),
+        minimalKey.vkGammeG2,
+        "vk_gamme_g2"
+      );
+      assert.deepEqual(
+        Array.from(registry.vkDeltaG2 as number[]),
+        minimalKey.vkDeltaG2,
+        "vk_delta_g2"
+      );
+      assert.deepEqual(
+        (registry.vkIc as number[][]).map((row) => Array.from(row)),
+        minimalKey.vkIc,
+        "vk_ic"
+      );
+
+      const accountInfo = await provider.connection.getAccountInfo(verifierRegistry, "confirmed");
+      assert.isNotNull(accountInfo, "verifier registry account must exist");
+      assert.strictEqual(
+        accountInfo!.data.length,
+        verifierRegistryAccountSize(minimalKey.vkIc.length),
+        "account size"
+      );
+    });
+
     it("rejects refund from a different signer (RefundPayerMismatch)", async () => {
       const rid = randomId();
       const [reqPda] = requestPDA(sonarProgramId, rid);
@@ -290,10 +578,14 @@ describe("Sonar ZK Coprocessor — Phase 2.3 Integration Tests", () => {
   });
 
   // ==========================================================================
-  // CALLBACK FLOW (5 tests)
+  // CALLBACK FLOW (6 tests)
   // ==========================================================================
 
   describe("Callback Flow", () => {
+    before(async function () {
+      await ensureDemoVerifierRegisteredOrSkip(this);
+    });
+
     it("callback with valid proof writes result and marks request Completed", async () => {
       const rid = randomId();
       const [reqPda] = requestPDA(sonarProgramId, rid);
@@ -308,7 +600,7 @@ describe("Sonar ZK Coprocessor — Phase 2.3 Integration Tests", () => {
 
       await program.methods
         .callback({ proof: VALID_PROOF, publicInputs: PUBLIC_INPUTS, result: resultPayload })
-        .accounts({ requestMetadata: reqPda, resultAccount: resPda, prover: provider.wallet.publicKey, callbackProgram: echoCallbackId })
+        .accounts({ requestMetadata: reqPda, resultAccount: resPda, verifierRegistry: demoVerifierRegistry, prover: provider.wallet.publicKey, callbackProgram: echoCallbackId })
         .remainingAccounts([])
         .rpc();
 
@@ -320,7 +612,7 @@ describe("Sonar ZK Coprocessor — Phase 2.3 Integration Tests", () => {
       assert.deepEqual(Array.from(res.result as number[]), Array.from(resultPayload), "result payload");
     });
 
-    it("callback with invalid proof fails with ProofVerificationFailed", async () => {
+    it("Rejects callback with cryptographically invalid proof", async () => {
       const rid = randomId();
       const [reqPda] = requestPDA(sonarProgramId, rid);
       const [resPda] = resultPDA(sonarProgramId, rid);
@@ -337,7 +629,30 @@ describe("Sonar ZK Coprocessor — Phase 2.3 Integration Tests", () => {
       await expectError(async () => {
         await program.methods
           .callback({ proof: badProof, publicInputs: PUBLIC_INPUTS, result: Buffer.alloc(0) })
-          .accounts({ requestMetadata: reqPda, resultAccount: resPda, prover: provider.wallet.publicKey, callbackProgram: echoCallbackId })
+          .accounts({ requestMetadata: reqPda, resultAccount: resPda, verifierRegistry: demoVerifierRegistry, prover: provider.wallet.publicKey, callbackProgram: echoCallbackId })
+          .remainingAccounts([])
+          .rpc();
+      }, "ProofVerificationFailed");
+    });
+
+    it("rejects callback with cryptographically invalid public inputs", async () => {
+      const rid = randomId();
+      const [reqPda] = requestPDA(sonarProgramId, rid);
+      const [resPda] = resultPDA(sonarProgramId, rid);
+      const slot = await provider.connection.getSlot();
+
+      await program.methods
+        .request({ requestId: Array.from(rid), computationId: Array.from(DEMO_COMPUTATION_ID), inputs: Buffer.alloc(0), deadline: new anchor.BN(slot + 5000), fee: new anchor.BN(100_000) })
+        .accounts({ payer: provider.wallet.publicKey, callbackProgram: echoCallbackId, requestMetadata: reqPda, resultAccount: resPda, systemProgram: SystemProgram.programId })
+        .rpc();
+
+      const badPublicInputs = PUBLIC_INPUTS.map((value) => Buffer.from(value));
+      badPublicInputs[0][0] ^= 0x01;
+
+      await expectError(async () => {
+        await program.methods
+          .callback({ proof: VALID_PROOF, publicInputs: badPublicInputs, result: Buffer.alloc(0) })
+          .accounts({ requestMetadata: reqPda, resultAccount: resPda, verifierRegistry: demoVerifierRegistry, prover: provider.wallet.publicKey, callbackProgram: echoCallbackId })
           .remainingAccounts([])
           .rpc();
       }, "ProofVerificationFailed");
@@ -362,7 +677,7 @@ describe("Sonar ZK Coprocessor — Phase 2.3 Integration Tests", () => {
       await expectError(async () => {
         await program.methods
           .callback({ proof: VALID_PROOF, publicInputs: PUBLIC_INPUTS, result: Buffer.alloc(0) })
-          .accounts({ requestMetadata: reqA, resultAccount: resB, prover: provider.wallet.publicKey, callbackProgram: echoCallbackId })
+          .accounts({ requestMetadata: reqA, resultAccount: resB, verifierRegistry: demoVerifierRegistry, prover: provider.wallet.publicKey, callbackProgram: echoCallbackId })
           .remainingAccounts([])
           .rpc();
       }, "InvalidRequestId");
@@ -385,7 +700,7 @@ describe("Sonar ZK Coprocessor — Phase 2.3 Integration Tests", () => {
       await expectError(async () => {
         await program.methods
           .callback({ proof: VALID_PROOF, publicInputs: PUBLIC_INPUTS, result: Buffer.alloc(0) })
-          .accounts({ requestMetadata: reqPda, resultAccount: resPda, prover: provider.wallet.publicKey, callbackProgram: echoCallbackId })
+          .accounts({ requestMetadata: reqPda, resultAccount: resPda, verifierRegistry: demoVerifierRegistry, prover: provider.wallet.publicKey, callbackProgram: echoCallbackId })
           .remainingAccounts([])
           .rpc();
       }, "DeadlinePassed");
@@ -407,7 +722,7 @@ describe("Sonar ZK Coprocessor — Phase 2.3 Integration Tests", () => {
 
       await program.methods
         .callback({ proof: VALID_PROOF, publicInputs: PUBLIC_INPUTS, result: Buffer.alloc(0) })
-        .accounts({ requestMetadata: reqPda, resultAccount: resPda, prover: provider.wallet.publicKey, callbackProgram: echoCallbackId })
+        .accounts({ requestMetadata: reqPda, resultAccount: resPda, verifierRegistry: demoVerifierRegistry, prover: provider.wallet.publicKey, callbackProgram: echoCallbackId })
         .remainingAccounts([])
         .rpc();
 
@@ -475,7 +790,9 @@ describe("Sonar ZK Coprocessor — Phase 2.3 Integration Tests", () => {
   // ==========================================================================
 
   describe("Edge Cases", () => {
-    it("second callback on completed request fails with RequestNotPending", async () => {
+    it("second callback on completed request fails with RequestNotPending", async function () {
+      await ensureDemoVerifierRegisteredOrSkip(this);
+
       const rid = randomId();
       const [reqPda] = requestPDA(sonarProgramId, rid);
       const [resPda] = resultPDA(sonarProgramId, rid);
@@ -488,20 +805,22 @@ describe("Sonar ZK Coprocessor — Phase 2.3 Integration Tests", () => {
 
       await program.methods
         .callback({ proof: VALID_PROOF, publicInputs: PUBLIC_INPUTS, result: Buffer.from([0x01]) })
-        .accounts({ requestMetadata: reqPda, resultAccount: resPda, prover: provider.wallet.publicKey, callbackProgram: echoCallbackId })
+        .accounts({ requestMetadata: reqPda, resultAccount: resPda, verifierRegistry: demoVerifierRegistry, prover: provider.wallet.publicKey, callbackProgram: echoCallbackId })
         .remainingAccounts([])
         .rpc();
 
       await expectError(async () => {
         await program.methods
           .callback({ proof: VALID_PROOF, publicInputs: PUBLIC_INPUTS, result: Buffer.from([0x02]) })
-          .accounts({ requestMetadata: reqPda, resultAccount: resPda, prover: provider.wallet.publicKey, callbackProgram: echoCallbackId })
+          .accounts({ requestMetadata: reqPda, resultAccount: resPda, verifierRegistry: demoVerifierRegistry, prover: provider.wallet.publicKey, callbackProgram: echoCallbackId })
           .remainingAccounts([])
           .rpc();
       }, "RequestNotPending");
     });
 
-    it("callback with wrong result PDA fails with InvalidRequestId", async () => {
+    it("callback with wrong result PDA fails with InvalidRequestId", async function () {
+      await ensureDemoVerifierRegisteredOrSkip(this);
+
       const idX = randomId();
       const idY = randomId();
       const [reqX] = requestPDA(sonarProgramId, idX);
@@ -520,7 +839,7 @@ describe("Sonar ZK Coprocessor — Phase 2.3 Integration Tests", () => {
       await expectError(async () => {
         await program.methods
           .callback({ proof: VALID_PROOF, publicInputs: PUBLIC_INPUTS, result: Buffer.alloc(0) })
-          .accounts({ requestMetadata: reqX, resultAccount: resY, prover: provider.wallet.publicKey, callbackProgram: echoCallbackId })
+          .accounts({ requestMetadata: reqX, resultAccount: resY, verifierRegistry: demoVerifierRegistry, prover: provider.wallet.publicKey, callbackProgram: echoCallbackId })
           .remainingAccounts([])
           .rpc();
       }, "InvalidRequestId");
@@ -570,5 +889,99 @@ describe("Sonar ZK Coprocessor — Phase 2.3 Integration Tests", () => {
 
   after(() => {
     console.log("\nsonar integration checks passed");
+  });
+});
+
+describe("Sonar refund deadline boundary tests (Bankrun)", () => {
+  it("refund at the exact deadline fails with DeadlineNotReached", async () => {
+    const context = await startAnchor(process.cwd(), [], []);
+    const payer = context.payer;
+    const requestId = randomId();
+    const [requestMetadata] = requestPDA(SONAR_PROGRAM_ID, requestId);
+    const [resultAccount] = resultPDA(SONAR_PROGRAM_ID, requestId);
+    const currentClock = await context.banksClient.getClock();
+    const deadline = currentClock.slot + 5n;
+    const fee = 1_000_000n;
+
+    await processBankrunTransaction(
+      context,
+      [
+        buildBankrunRequestInstruction(
+          payer.publicKey,
+          requestMetadata,
+          resultAccount,
+          requestId,
+          deadline,
+          fee
+        ),
+      ],
+      [payer]
+    );
+
+    context.warpToSlot(deadline);
+    const warpedClock = await context.banksClient.getClock();
+    assert.strictEqual(warpedClock.slot, deadline, "clock should warp to the exact deadline");
+
+    const refundResult = await tryProcessBankrunTransaction(
+      context,
+      [buildBankrunRefundInstruction(payer.publicKey, requestMetadata)],
+      [payer]
+    );
+    expectBankrunError(refundResult, "DeadlineNotReached");
+
+    const metadata = await fetchBankrunRequestMetadata(context, requestMetadata);
+    assert.isTrue(hasStatusVariant(metadata.status, "Pending"), "status should stay Pending");
+  });
+
+  it("refund at deadline plus one succeeds, marks Refunded, and returns lamports", async () => {
+    const context = await startAnchor(process.cwd(), [], []);
+    const payer = context.payer;
+    const requestId = randomId();
+    const [requestMetadata] = requestPDA(SONAR_PROGRAM_ID, requestId);
+    const [resultAccount] = resultPDA(SONAR_PROGRAM_ID, requestId);
+    const currentClock = await context.banksClient.getClock();
+    const deadline = currentClock.slot + 5n;
+    const fee = 2_000_000n;
+
+    await processBankrunTransaction(
+      context,
+      [
+        buildBankrunRequestInstruction(
+          payer.publicKey,
+          requestMetadata,
+          resultAccount,
+          requestId,
+          deadline,
+          fee
+        ),
+      ],
+      [payer]
+    );
+
+    context.warpToSlot(deadline + 1n);
+    const warpedClock = await context.banksClient.getClock();
+    assert.strictEqual(
+      warpedClock.slot,
+      deadline + 1n,
+      "clock should warp to deadline plus one"
+    );
+
+    const balanceBeforeRefund = await context.banksClient.getBalance(payer.publicKey);
+    const refundInstruction = buildBankrunRefundInstruction(payer.publicKey, requestMetadata);
+    const refundTransaction = await buildBankrunTransaction(context, [refundInstruction], [payer]);
+    const refundFee = await context.banksClient.getFeeForMessage(refundTransaction.compileMessage());
+    assert.isNotNull(refundFee, "refund transaction fee should be available");
+
+    await context.banksClient.processTransaction(refundTransaction);
+
+    const balanceAfterRefund = await context.banksClient.getBalance(payer.publicKey);
+    assert.strictEqual(
+      balanceAfterRefund - balanceBeforeRefund,
+      fee - refundFee!,
+      "payer should receive the locked lamports back minus the refund transaction fee"
+    );
+
+    const metadata = await fetchBankrunRequestMetadata(context, requestMetadata);
+    assert.isTrue(hasStatusVariant(metadata.status, "Refunded"), "status should become Refunded");
   });
 });

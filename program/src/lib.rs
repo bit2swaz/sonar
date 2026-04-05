@@ -368,6 +368,7 @@ pub enum RequestStatus {
     Refunded,
 }
 
+#[inline(never)]
 fn verify_groth16_proof(
     verifier_registry: &VerifierRegistry,
     params: &CallbackParams,
@@ -399,6 +400,7 @@ fn verify_groth16_proof(
     }
 }
 
+#[inline(never)]
 fn verify_with_key<const N: usize>(
     verifying_key: &Groth16Verifyingkey<'_>,
     params: &CallbackParams,
@@ -430,6 +432,7 @@ fn verify_with_key<const N: usize>(
         .map_err(|_| error!(ErrorCode::ProofVerificationFailed))
 }
 
+#[inline(never)]
 fn parse_public_inputs<const N: usize>(public_inputs: &[Vec<u8>]) -> Result<[[u8; 32]; N]> {
     require!(
         public_inputs.len() == N,

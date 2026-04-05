@@ -56,15 +56,15 @@ fn normalize_callback_payload(
     if response.proof.len() == GROTH16_PROOF_BYTES {
         let proof_a: [u8; GROTH16_PROOF_A_BYTES] = response.proof[..GROTH16_PROOF_A_BYTES]
             .try_into()
-            .expect("slice length should match proof_a length");
+            .context("invalid Groth16 proof_a segment length")?;
         let proof_b: [u8; GROTH16_PROOF_B_BYTES] = response.proof
             [GROTH16_PROOF_A_BYTES..GROTH16_PROOF_A_BYTES + GROTH16_PROOF_B_BYTES]
             .try_into()
-            .expect("slice length should match proof_b length");
+            .context("invalid Groth16 proof_b segment length")?;
         let proof_c: [u8; GROTH16_PROOF_C_BYTES] = response.proof
             [GROTH16_PROOF_A_BYTES + GROTH16_PROOF_B_BYTES..]
             .try_into()
-            .expect("slice length should match proof_c length");
+            .context("invalid Groth16 proof_c segment length")?;
 
         let flattened_public_inputs =
             flatten_public_inputs_exact(&response.public_inputs, GROTH16_PUBLIC_INPUT_BYTES)?;
@@ -130,9 +130,9 @@ fn flatten_public_inputs_any(public_inputs: &[Vec<u8>]) -> anyhow::Result<Vec<u8
 
 /// Anchor instruction discriminator: SHA-256(`"global:callback"`)[..8].
 pub fn callback_discriminator() -> [u8; 8] {
-    hash(b"global:callback").to_bytes()[..8]
-        .try_into()
-        .expect("8 bytes from 32-byte hash")
+    let mut discriminator = [0u8; 8];
+    discriminator.copy_from_slice(&hash(b"global:callback").to_bytes()[..8]);
+    discriminator
 }
 
 // ---------------------------------------------------------------------------
@@ -185,6 +185,7 @@ pub fn build_callback_instruction_data(
 /// 2. `verifier_registry` — read-only, not signer (PDA)
 /// 3. `prover`            — mutable, signer (coordinator keypair)
 /// 4. `callback_program`  — not mutable, not signer
+#[allow(clippy::too_many_arguments)]
 pub fn build_callback_instruction(
     program_id: Pubkey,
     request_id: &[u8; 32],
@@ -415,16 +416,17 @@ async fn process_response(
         .map(|account| account.pubkey)
         .collect::<Vec<_>>();
 
-    let priority_fee_micro_lamports = match fetch_priority_fee_estimate(rpc, &writable_accounts).await {
-        Ok(priority_fee_micro_lamports) => priority_fee_micro_lamports,
-        Err(error) => {
-            warn!(
-                error = ?error,
-                "priority fee estimation failed; falling back to zero micro-lamports"
-            );
-            0
-        },
-    };
+    let priority_fee_micro_lamports =
+        match fetch_priority_fee_estimate(rpc, &writable_accounts).await {
+            Ok(priority_fee_micro_lamports) => priority_fee_micro_lamports,
+            Err(error) => {
+                warn!(
+                    error = ?error,
+                    "priority fee estimation failed; falling back to zero micro-lamports"
+                );
+                0
+            },
+        };
 
     let instructions = build_callback_transaction_instructions(ix, priority_fee_micro_lamports);
 
@@ -678,8 +680,10 @@ mod tests {
             &'a self,
             writable_accounts: &'a [Pubkey],
         ) -> BoxFuture<'a, ClientResult<Vec<RpcPrioritizationFee>>> {
-            *self.writable_accounts.lock().expect("lock writable accounts") =
-                writable_accounts.to_vec();
+            *self
+                .writable_accounts
+                .lock()
+                .expect("lock writable accounts") = writable_accounts.to_vec();
             futures_util::future::ready(Ok(self.fees.clone())).boxed()
         }
     }

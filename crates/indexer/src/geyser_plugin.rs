@@ -96,10 +96,7 @@ impl DatabaseWriter {
     }
 
     fn flush_account_batch(&self, updates: &[AccountUpdate]) -> PluginResult<()> {
-        let _guard = self
-            .operation_lock
-            .lock()
-            .expect("db operation lock poisoned");
+        let _guard = self.lock_operation()?;
         self.runtime
             .block_on(db::insert_account_batch(&self.pool, updates))
             .map_err(|error| GeyserPluginError::AccountsUpdateError {
@@ -108,15 +105,18 @@ impl DatabaseWriter {
     }
 
     fn write_slot_update(&self, update: &SlotUpdate) -> PluginResult<()> {
-        let _guard = self
-            .operation_lock
-            .lock()
-            .expect("db operation lock poisoned");
+        let _guard = self.lock_operation()?;
         self.runtime
             .block_on(db::insert_slot_update(&self.pool, update))
             .map_err(|error| GeyserPluginError::SlotStatusUpdateError {
                 msg: error.to_string(),
             })
+    }
+
+    fn lock_operation(&self) -> PluginResult<std::sync::MutexGuard<'_, ()>> {
+        self.operation_lock
+            .lock()
+            .map_err(|_| plugin_custom_error(anyhow!("db operation lock poisoned")))
     }
 
     #[cfg(test)]
@@ -160,14 +160,20 @@ impl SonarGeyserPlugin {
         }
     }
 
-    fn with_state<T>(&self, f: impl FnOnce(&PluginState) -> T) -> T {
-        let state = self.state.lock().expect("plugin state lock poisoned");
-        f(&state)
+    fn with_state<T>(&self, f: impl FnOnce(&PluginState) -> T) -> PluginResult<T> {
+        let state = self
+            .state
+            .lock()
+            .map_err(|_| plugin_custom_error(anyhow!("plugin state lock poisoned")))?;
+        Ok(f(&state))
     }
 
-    fn with_state_mut<T>(&self, f: impl FnOnce(&mut PluginState) -> T) -> T {
-        let mut state = self.state.lock().expect("plugin state lock poisoned");
-        f(&mut state)
+    fn with_state_mut<T>(&self, f: impl FnOnce(&mut PluginState) -> T) -> PluginResult<T> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| plugin_custom_error(anyhow!("plugin state lock poisoned")))?;
+        Ok(f(&mut state))
     }
 
     fn record_from_update(
@@ -284,21 +290,22 @@ impl SonarGeyserPlugin {
     fn take_pending_updates(
         &self,
     ) -> PluginResult<Option<(Arc<DatabaseWriter>, Vec<AccountUpdate>)>> {
-        let mut state = self.state.lock().expect("plugin state lock poisoned");
-        if state.pending_updates.is_empty() {
-            return Ok(None);
-        }
+        self.with_state_mut(|state| {
+            if state.pending_updates.is_empty() {
+                return Ok(None);
+            }
 
-        let database =
-            state
-                .database
-                .clone()
-                .ok_or_else(|| GeyserPluginError::AccountsUpdateError {
-                    msg: "plugin database has not been initialized".to_string(),
-                })?;
+            let database =
+                state
+                    .database
+                    .clone()
+                    .ok_or_else(|| GeyserPluginError::AccountsUpdateError {
+                        msg: "plugin database has not been initialized".to_string(),
+                    })?;
 
-        let batch = std::mem::take(&mut state.pending_updates);
-        Ok(Some((database, batch)))
+            let batch = std::mem::take(&mut state.pending_updates);
+            Ok(Some((database, batch)))
+        })?
     }
 }
 
@@ -326,7 +333,7 @@ impl GeyserPlugin for SonarGeyserPlugin {
             state.loaded = true;
             state.database = Some(database);
             state.pending_updates.clear();
-        });
+        })?;
 
         log::info!(
             target: "sonar::geyser",
@@ -347,10 +354,12 @@ impl GeyserPlugin for SonarGeyserPlugin {
             log::error!(target: "sonar::geyser", "failed to flush pending account updates during unload: {error}");
         }
 
-        self.with_state_mut(|state| {
+        if let Err(error) = self.with_state_mut(|state| {
             state.loaded = false;
             state.database = None;
-        });
+        }) {
+            log::error!(target: "sonar::geyser", "failed to update plugin state during unload: {error}");
+        }
 
         log::info!(target: "sonar::geyser", "unloaded {}", self.name());
     }
@@ -375,7 +384,7 @@ impl GeyserPlugin for SonarGeyserPlugin {
                 .map(|config| config.batch_size)
                 .unwrap_or(1);
             state.pending_updates.len() >= batch_size
-        });
+        })?;
 
         if should_flush {
             self.flush_pending_updates()?;
@@ -411,7 +420,7 @@ impl GeyserPlugin for SonarGeyserPlugin {
         parent: Option<u64>,
         status: &SlotStatus,
     ) -> PluginResult<()> {
-        let database = self.with_state(|state| state.database.clone());
+        let database = self.with_state(|state| state.database.clone())?;
         if let Some(database) = database {
             database.write_slot_update(&SlotUpdate {
                 slot,
@@ -653,11 +662,15 @@ mod tests {
     #[test]
     fn test_on_unload_marks_plugin_not_loaded() {
         let mut plugin = SonarGeyserPlugin::default();
-        plugin.with_state_mut(|state| state.loaded = true);
+        plugin
+            .with_state_mut(|state| state.loaded = true)
+            .expect("state update should succeed");
 
         plugin.on_unload();
 
-        assert!(!plugin.with_state(|state| state.loaded));
+        assert!(!plugin
+            .with_state(|state| state.loaded)
+            .expect("state read should succeed"));
     }
 
     #[test]
@@ -671,7 +684,7 @@ mod tests {
             plugin.update_account(ReplicaAccountInfoVersions::V0_0_1(&account), 99, false)?;
 
             let pool = plugin
-                .with_state(|state| state.database.as_ref().map(|database| database.pool()))
+                .with_state(|state| state.database.as_ref().map(|database| database.pool()))?
                 .context("database pool should exist")?;
 
             let runtime = Builder::new_current_thread().enable_all().build()?;

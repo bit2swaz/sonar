@@ -26,7 +26,11 @@ const VERIFIER_SEED: &[u8] = b"verifier";
 const SPINNER_TICK_MS: u64 = 80;
 
 #[derive(Debug, Parser)]
-#[command(name = "sonar-cli", version, about = "Developer CLI for Sonar verifier registration")]
+#[command(
+    name = "sonar-cli",
+    version,
+    about = "Developer CLI for Sonar verifier registration"
+)]
 #[command(propagate_version = true)]
 pub struct Cli {
     #[command(subcommand)]
@@ -129,8 +133,7 @@ fn spinner(message: &str) -> ProgressBar {
     let progress = ProgressBar::new_spinner();
     progress.enable_steady_tick(Duration::from_millis(SPINNER_TICK_MS));
     progress.set_style(
-        ProgressStyle::with_template("{spinner:.green} {msg}")
-            .expect("valid spinner template"),
+        ProgressStyle::with_template("{spinner:.green} {msg}").expect("valid spinner template"),
     );
     progress.set_message(message.to_string());
     progress
@@ -150,8 +153,12 @@ fn resolve_groth16_vk_bytes(args: &RegisterArgs, computation_id: &[u8; 32]) -> R
     }
 
     if let Some(path) = discover_groth16_vk_path()? {
-        return fs::read(&path)
-            .with_context(|| format!("failed to read Groth16 verifier artifact {}", path.display()));
+        return fs::read(&path).with_context(|| {
+            format!(
+                "failed to read Groth16 verifier artifact {}",
+                path.display()
+            )
+        });
     }
 
     Ok(sp1_verifier::GROTH16_VK_BYTES.to_vec())
@@ -357,7 +364,11 @@ fn write_fq_be(value: &Fq, output: &mut [u8]) {
 }
 
 fn verifier_registry_pda(computation_id: &[u8; 32]) -> Pubkey {
-    Pubkey::find_program_address(&[VERIFIER_SEED, computation_id.as_ref()], &sonar_program::ID).0
+    Pubkey::find_program_address(
+        &[VERIFIER_SEED, computation_id.as_ref()],
+        &sonar_program::ID,
+    )
+    .0
 }
 
 fn build_register_verifier_instruction(
@@ -383,9 +394,7 @@ fn send_transaction(
     authority: &Keypair,
     instructions: &[Instruction],
 ) -> Result<solana_sdk::signature::Signature> {
-    let blockhash = rpc
-        .get_latest_blockhash()
-        .context("get latest blockhash")?;
+    let blockhash = rpc.get_latest_blockhash().context("get latest blockhash")?;
     let transaction = Transaction::new_signed_with_payer(
         instructions,
         Some(&authority.pubkey()),
@@ -405,8 +414,8 @@ fn decode_hex_32(input: &str) -> Result<[u8; 32]> {
     let mut output = [0u8; 32];
     for (index, chunk) in normalized.as_bytes().chunks_exact(2).enumerate() {
         let hex = std::str::from_utf8(chunk).context("hex input should be utf-8")?;
-        output[index] = u8::from_str_radix(hex, 16)
-            .with_context(|| format!("invalid hex byte {hex}"))?;
+        output[index] =
+            u8::from_str_radix(hex, 16).with_context(|| format!("invalid hex byte {hex}"))?;
     }
     Ok(output)
 }

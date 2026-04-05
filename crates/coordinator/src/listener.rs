@@ -17,10 +17,10 @@
 
 use std::collections::HashSet;
 use std::str::FromStr;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
-use anyhow::Context as _;
+use anyhow::{anyhow, Context as _};
 use futures_util::StreamExt as _;
 use solana_client::{
     nonblocking::{pubsub_client::PubsubClient, rpc_client::RpcClient},
@@ -48,6 +48,8 @@ const LOG_INPUTS_PREFIX: &str = "Program log: sonar:inputs:";
 
 /// Byte length of historical-average inputs: pubkey[32] + from_slot[8] + to_slot[8].
 pub const HISTORICAL_AVG_INPUTS_LEN: usize = 48;
+
+const HTTP_TIMEOUT: Duration = Duration::from_secs(5);
 
 // ---------------------------------------------------------------------------
 // On-chain account layout (manual borsh decode — no extra dep)
@@ -257,13 +259,24 @@ pub async fn fetch_historical_avg_inputs(
     indexer_url: &str,
     inputs: &HistoricalAvgInputs,
 ) -> anyhow::Result<Vec<u8>> {
+    let client = build_http_client(HTTP_TIMEOUT)?;
+    fetch_historical_avg_inputs_with_client(&client, indexer_url, inputs).await
+}
+
+async fn fetch_historical_avg_inputs_with_client(
+    client: &reqwest::Client,
+    indexer_url: &str,
+    inputs: &HistoricalAvgInputs,
+) -> anyhow::Result<Vec<u8>> {
     let pubkey_b58 = bs58::encode(&inputs.pubkey).into_string();
     let url = format!(
         "{indexer_url}/account_history/{pubkey_b58}?from_slot={}&to_slot={}",
         inputs.from_slot, inputs.to_slot,
     );
 
-    let balances: Vec<u64> = reqwest::get(&url)
+    let balances: Vec<u64> = client
+        .get(&url)
+        .send()
         .await
         .with_context(|| format!("GET {url}"))?
         .error_for_status()
@@ -299,7 +312,7 @@ pub async fn run_listener(
     config: ListenerConfig,
     mut shutdown: tokio::sync::watch::Receiver<bool>,
 ) -> anyhow::Result<()> {
-    let program_id = Pubkey::from_str(PROGRAM_ID_STR).expect("valid program ID");
+    let program_id = Pubkey::from_str(PROGRAM_ID_STR).context("invalid Sonar program ID")?;
 
     let rpc = RpcClient::new_with_commitment(config.rpc_url.clone(), CommitmentConfig::confirmed());
 
@@ -421,6 +434,7 @@ async fn poll_pending_requests(
     // status=Pending is 0 at byte offset 184
     // Layout: 8 disc + 32*5 pubkeys + 8 deadline + 8 fee = 184
     let status_b64 = base64_encode(&[0u8]);
+    let client = build_http_client(HTTP_TIMEOUT)?;
 
     let body = serde_json::json!({
         "jsonrpc": "2.0",
@@ -439,15 +453,7 @@ async fn poll_pending_requests(
         ]
     });
 
-    let resp: serde_json::Value = reqwest::Client::new()
-        .post(rpc_url)
-        .json(&body)
-        .send()
-        .await
-        .context("getProgramAccounts HTTP")?
-        .json()
-        .await
-        .context("getProgramAccounts JSON parse")?;
+    let resp = post_json(&client, rpc_url, &body, "getProgramAccounts").await?;
 
     let accounts = match resp["result"].as_array() {
         Some(a) => a.clone(),
@@ -494,7 +500,7 @@ async fn poll_pending_requests(
 
         // Deduplicate: skip if already dispatched.
         {
-            let mut guard = seen.lock().unwrap();
+            let mut guard = lock_seen(seen)?;
             if !guard.insert(meta.request_id) {
                 debug!(
                     "polling: duplicate request {} — skipping",
@@ -515,7 +521,7 @@ async fn poll_pending_requests(
         {
             warn!("polling: process_request_metadata: {e:#}");
             // Remove from seen so we retry next poll.
-            let mut guard = seen.lock().unwrap();
+            let mut guard = lock_seen(seen)?;
             guard.remove(&meta.request_id);
         }
     }
@@ -533,6 +539,7 @@ async fn process_request_metadata(
     pda_str: &str,
     meta: &OnChainRequestMetadata,
 ) -> anyhow::Result<()> {
+    let client = build_http_client(HTTP_TIMEOUT)?;
     // Get the most recent signature for this PDA (the creation tx).
     let sig_body = serde_json::json!({
         "jsonrpc": "2.0",
@@ -544,15 +551,7 @@ async fn process_request_metadata(
         ]
     });
 
-    let sig_resp: serde_json::Value = reqwest::Client::new()
-        .post(rpc_url)
-        .json(&sig_body)
-        .send()
-        .await
-        .context("getSignaturesForAddress HTTP")?
-        .json()
-        .await
-        .context("getSignaturesForAddress JSON")?;
+    let sig_resp = post_json(&client, rpc_url, &sig_body, "getSignaturesForAddress").await?;
 
     let sig_str = sig_resp["result"]
         .as_array()
@@ -597,6 +596,15 @@ async fn process_request_metadata(
 /// Fetch the `logMessages` for a confirmed transaction via a raw JSON-RPC call.
 /// Returns `None` when the transaction is not yet available.
 async fn fetch_tx_logs(rpc_url: &str, signature: &str) -> anyhow::Result<Option<Vec<String>>> {
+    let client = build_http_client(HTTP_TIMEOUT)?;
+    fetch_tx_logs_with_client(&client, rpc_url, signature).await
+}
+
+async fn fetch_tx_logs_with_client(
+    client: &reqwest::Client,
+    rpc_url: &str,
+    signature: &str,
+) -> anyhow::Result<Option<Vec<String>>> {
     let body = serde_json::json!({
         "jsonrpc": "2.0",
         "id": 1,
@@ -611,15 +619,7 @@ async fn fetch_tx_logs(rpc_url: &str, signature: &str) -> anyhow::Result<Option<
         ]
     });
 
-    let response: serde_json::Value = reqwest::Client::new()
-        .post(rpc_url)
-        .json(&body)
-        .send()
-        .await
-        .context("getTransaction HTTP")?
-        .json::<serde_json::Value>()
-        .await
-        .context("getTransaction parse JSON")?;
+    let response = post_json(client, rpc_url, &body, "getTransaction").await?;
 
     if response["result"].is_null() {
         return Ok(None);
@@ -724,7 +724,7 @@ async fn handle_log_event(
 
     // Deduplicate: skip if already dispatched.
     {
-        let mut guard = seen.lock().unwrap();
+        let mut guard = lock_seen(seen)?;
         if !guard.insert(request_id) {
             debug!("Duplicate request — skipping");
             return Ok(());
@@ -758,6 +758,39 @@ async fn handle_log_event(
 
     info!("Dispatched job for request {}", hex_encode(&request_id));
     Ok(())
+}
+
+fn build_http_client(timeout: Duration) -> anyhow::Result<reqwest::Client> {
+    reqwest::Client::builder()
+        .timeout(timeout)
+        .build()
+        .context("build HTTP client")
+}
+
+async fn post_json(
+    client: &reqwest::Client,
+    rpc_url: &str,
+    body: &serde_json::Value,
+    operation: &str,
+) -> anyhow::Result<serde_json::Value> {
+    client
+        .post(rpc_url)
+        .json(body)
+        .send()
+        .await
+        .with_context(|| format!("{operation} HTTP"))?
+        .error_for_status()
+        .with_context(|| format!("{operation} HTTP status"))?
+        .json::<serde_json::Value>()
+        .await
+        .with_context(|| format!("{operation} JSON parse"))
+}
+
+fn lock_seen<'a>(
+    seen: &'a Arc<Mutex<HashSet<[u8; 32]>>>,
+) -> anyhow::Result<MutexGuard<'a, HashSet<[u8; 32]>>> {
+    seen.lock()
+        .map_err(|_| anyhow!("seen-request set lock poisoned"))
 }
 
 /// Derive final prover `inputs` from the raw on-chain bytes.
@@ -804,6 +837,11 @@ fn hex_encode(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::{
+        io::AsyncReadExt,
+        net::TcpListener,
+        time::{sleep, Duration as TokioDuration},
+    };
 
     // --- parse_request_id_from_logs ---
 
@@ -997,5 +1035,35 @@ mod tests {
         let inputs = vec![1u8, 2, 3];
         let job = build_prover_job(&meta, inputs.clone());
         assert_eq!(job.inputs, inputs);
+    }
+
+    #[tokio::test]
+    async fn fetch_tx_logs_times_out_on_slow_rpc() {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("test listener should bind");
+        let addr = listener.local_addr().expect("listener addr should resolve");
+
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("accept should succeed");
+            let mut request = [0u8; 1024];
+            let _ = socket.read(&mut request).await;
+            sleep(TokioDuration::from_millis(150)).await;
+        });
+
+        let client = build_http_client(Duration::from_millis(50)).expect("test client");
+        let error = fetch_tx_logs_with_client(
+            &client,
+            &format!("http://{addr}"),
+            "5N6wZ4nQ4Vh2j3t3r8q6i5m4n3o2p1a9b8c7d6e5f4g3h2i1",
+        )
+        .await
+        .expect_err("slow RPC should time out");
+
+        let rendered = error.to_string();
+        assert!(
+            rendered.contains("getTransaction HTTP") || rendered.contains("operation timed out"),
+            "unexpected timeout error: {error:#}"
+        );
     }
 }

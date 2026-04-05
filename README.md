@@ -157,6 +157,30 @@ anchor test
 
 note: Anchor CLI `0.32.1` can emit a trailing validator-cleanup `os error 2` even when the suite passes. in CI we tolerate that specific cleanup quirk and instead fail only on actual failing specs or a missing success banner.
 
+### 5.1 run benchmarks and profiles
+
+Criterion benchmarks are checked in for coordinator/prover hot paths:
+
+```bash
+cargo bench -p sonar-coordinator --bench coordinator_hot_paths
+cargo bench -p sonar-prover --bench prover_hot_paths
+```
+
+to list available benchmark ids or capture a Criterion profile window:
+
+```bash
+cargo bench -p sonar-coordinator --bench coordinator_hot_paths -- --list
+cargo bench -p sonar-prover --bench prover_hot_paths -- --profile-time=5
+```
+
+for system-level flamegraphs, install `cargo-flamegraph` and `perf`, then run one bench target at a time:
+
+```bash
+cargo install flamegraph
+cargo flamegraph -p sonar-coordinator --bench coordinator_hot_paths
+cargo flamegraph -p sonar-prover --bench prover_hot_paths
+```
+
 ### 6. run the services
 
 indexer:

@@ -23,6 +23,11 @@ tempfile = "3"
 proptest = "1"
 testcontainers = "0.27.2"
 tracing-subscriber = { workspace = true }
+criterion = { version = "0.5.1", features = ["html_reports"] }
 
 [features]
 mock = []
+
+[[bench]]
+name = "prover_hot_paths"
+harness = false

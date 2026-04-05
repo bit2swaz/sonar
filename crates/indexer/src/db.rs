@@ -551,6 +551,21 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_connect_pool_rejects_invalid_database_url() {
+        let error = connect_pool(&DatabaseConfig {
+            database_url: "not-a-valid-postgres-url".to_string(),
+            max_connections: 1,
+        })
+        .await
+        .expect_err("invalid database URL should fail");
+
+        assert!(
+            error.to_string().contains("failed to connect to postgres"),
+            "unexpected error: {error:#}"
+        );
+    }
+
+    #[tokio::test]
     async fn test_insert_and_query_account_history() -> Result<()> {
         with_test_pool(|pool| async move {
             let mut updates = vec![

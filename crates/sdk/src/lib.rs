@@ -1,19 +1,13 @@
 #![cfg_attr(not(target_os = "solana"), allow(unexpected_cfgs))]
 
 use anchor_lang::{
-	prelude::*,
-	solana_program::instruction::AccountMeta,
-	ToAccountInfos,
-	ToAccountMetas,
+    prelude::*, solana_program::instruction::AccountMeta, ToAccountInfos, ToAccountMetas,
 };
 
 pub mod r#macro;
 
 pub use sonar_program::{
-	program::Sonar,
-	RequestParams,
-	DEMO_COMPUTATION_ID,
-	HISTORICAL_AVG_COMPUTATION_ID,
+    program::Sonar, RequestParams, DEMO_COMPUTATION_ID, HISTORICAL_AVG_COMPUTATION_ID,
 };
 
 const REQUEST_METADATA_SEED: &[u8] = b"request";
@@ -32,62 +26,62 @@ const RESULT_ACCOUNT_SEED: &[u8] = b"result";
 /// [`CpiContext`].
 #[derive(Clone)]
 pub struct Request<'info> {
-	/// Unique nonce for this request.
-	pub request_id: [u8; 32],
-	/// Fee payer that funds the request escrow and PDA creation.
-	pub payer: AccountInfo<'info>,
-	/// Program that Sonar will call during callback execution.
-	pub callback_program: AccountInfo<'info>,
-	/// Writable Sonar request metadata PDA derived from `request_id`.
-	pub request_metadata: AccountInfo<'info>,
-	/// Writable Sonar result PDA derived from `request_id`.
-	pub result_account: AccountInfo<'info>,
-	/// System program used by Sonar to create PDA accounts.
-	pub system_program: AccountInfo<'info>,
+    /// Unique nonce for this request.
+    pub request_id: [u8; 32],
+    /// Fee payer that funds the request escrow and PDA creation.
+    pub payer: AccountInfo<'info>,
+    /// Program that Sonar will call during callback execution.
+    pub callback_program: AccountInfo<'info>,
+    /// Writable Sonar request metadata PDA derived from `request_id`.
+    pub request_metadata: AccountInfo<'info>,
+    /// Writable Sonar result PDA derived from `request_id`.
+    pub result_account: AccountInfo<'info>,
+    /// System program used by Sonar to create PDA accounts.
+    pub system_program: AccountInfo<'info>,
 }
 
 impl<'info> ToAccountInfos<'info> for Request<'info> {
-	fn to_account_infos(&self) -> Vec<AccountInfo<'info>> {
-		vec![
-			self.payer.clone(),
-			self.callback_program.clone(),
-			self.request_metadata.clone(),
-			self.result_account.clone(),
-			self.system_program.clone(),
-		]
-	}
+    fn to_account_infos(&self) -> Vec<AccountInfo<'info>> {
+        vec![
+            self.payer.clone(),
+            self.callback_program.clone(),
+            self.request_metadata.clone(),
+            self.result_account.clone(),
+            self.system_program.clone(),
+        ]
+    }
 }
 
 impl ToAccountMetas for Request<'_> {
-	fn to_account_metas(&self, _is_signer: Option<bool>) -> Vec<AccountMeta> {
-		vec![
-			AccountMeta {
-				pubkey: *self.payer.key,
-				is_signer: self.payer.is_signer,
-				is_writable: self.payer.is_writable,
-			},
-			AccountMeta {
-				pubkey: *self.callback_program.key,
-				is_signer: self.callback_program.is_signer,
-				is_writable: self.callback_program.is_writable,
-			},
-			AccountMeta {
-				pubkey: *self.request_metadata.key,
-				is_signer: self.request_metadata.is_signer,
-				is_writable: self.request_metadata.is_writable,
-			},
-			AccountMeta {
-				pubkey: *self.result_account.key,
-				is_signer: self.result_account.is_signer,
-				is_writable: self.result_account.is_writable,
-			},
-			AccountMeta {
-				pubkey: *self.system_program.key,
-				is_signer: self.system_program.is_signer,
-				is_writable: self.system_program.is_writable,
-			},
-		]
-	}
+    fn to_account_metas(&self, _is_signer: Option<bool>) -> Vec<AccountMeta> {
+        vec![
+            AccountMeta {
+                pubkey: *self.payer.key,
+                is_signer: self.payer.is_signer,
+                is_writable: self.payer.is_writable,
+            },
+            AccountMeta {
+                pubkey: *self.callback_program.key,
+                is_signer: self.callback_program.is_signer,
+                is_writable: self.callback_program.is_writable,
+            },
+            AccountMeta {
+                pubkey: *self.request_metadata.key,
+                is_signer: self.request_metadata.is_signer,
+                is_writable: self.request_metadata.is_writable,
+            },
+            AccountMeta {
+                pubkey: *self.result_account.key,
+                is_signer: self.result_account.is_signer,
+                is_writable: self.result_account.is_writable,
+            },
+            AccountMeta {
+                pubkey: *self.system_program.key,
+                is_signer: self.system_program.is_signer,
+                is_writable: self.system_program.is_writable,
+            },
+        ]
+    }
 }
 
 /// Submit a Sonar computation request from another Anchor program.
@@ -160,61 +154,61 @@ impl ToAccountMetas for Request<'_> {
 /// }
 /// ```
 pub fn request<'info>(
-	ctx: CpiContext<'_, '_, '_, 'info, Request<'info>>,
-	computation_id: [u8; 32],
-	inputs: Vec<u8>,
-	deadline: u64,
-	fee: u64,
+    ctx: CpiContext<'_, '_, '_, 'info, Request<'info>>,
+    computation_id: [u8; 32],
+    inputs: Vec<u8>,
+    deadline: u64,
+    fee: u64,
 ) -> Result<()> {
-	let request_id = ctx.accounts.request_id;
-	let sonar_program_id = ctx.program.key();
+    let request_id = ctx.accounts.request_id;
+    let sonar_program_id = ctx.program.key();
 
-	let (expected_request_metadata, _request_metadata_bump) = Pubkey::find_program_address(
-		&[REQUEST_METADATA_SEED, request_id.as_ref()],
-		&sonar_program_id,
-	);
-	let (expected_result_account, _result_account_bump) = Pubkey::find_program_address(
-		&[RESULT_ACCOUNT_SEED, request_id.as_ref()],
-		&sonar_program_id,
-	);
+    let (expected_request_metadata, _request_metadata_bump) = Pubkey::find_program_address(
+        &[REQUEST_METADATA_SEED, request_id.as_ref()],
+        &sonar_program_id,
+    );
+    let (expected_result_account, _result_account_bump) = Pubkey::find_program_address(
+        &[RESULT_ACCOUNT_SEED, request_id.as_ref()],
+        &sonar_program_id,
+    );
 
-	require_keys_eq!(
-		ctx.accounts.request_metadata.key(),
-		expected_request_metadata,
-		SonarSdkError::InvalidRequestMetadataPda
-	);
-	require_keys_eq!(
-		ctx.accounts.result_account.key(),
-		expected_result_account,
-		SonarSdkError::InvalidResultAccountPda
-	);
+    require_keys_eq!(
+        ctx.accounts.request_metadata.key(),
+        expected_request_metadata,
+        SonarSdkError::InvalidRequestMetadataPda
+    );
+    require_keys_eq!(
+        ctx.accounts.result_account.key(),
+        expected_result_account,
+        SonarSdkError::InvalidResultAccountPda
+    );
 
-	let cpi_accounts = sonar_program::cpi::accounts::Request {
-		payer: ctx.accounts.payer.clone(),
-		callback_program: ctx.accounts.callback_program.clone(),
-		request_metadata: ctx.accounts.request_metadata.clone(),
-		result_account: ctx.accounts.result_account.clone(),
-		system_program: ctx.accounts.system_program.clone(),
-	};
-	let cpi_ctx = CpiContext::new_with_signer(ctx.program, cpi_accounts, ctx.signer_seeds)
-		.with_remaining_accounts(ctx.remaining_accounts.to_vec());
+    let cpi_accounts = sonar_program::cpi::accounts::Request {
+        payer: ctx.accounts.payer.clone(),
+        callback_program: ctx.accounts.callback_program.clone(),
+        request_metadata: ctx.accounts.request_metadata.clone(),
+        result_account: ctx.accounts.result_account.clone(),
+        system_program: ctx.accounts.system_program.clone(),
+    };
+    let cpi_ctx = CpiContext::new_with_signer(ctx.program, cpi_accounts, ctx.signer_seeds)
+        .with_remaining_accounts(ctx.remaining_accounts.to_vec());
 
-	sonar_program::cpi::request(
-		cpi_ctx,
-		RequestParams {
-			request_id,
-			computation_id,
-			inputs,
-			deadline,
-			fee,
-		},
-	)
+    sonar_program::cpi::request(
+        cpi_ctx,
+        RequestParams {
+            request_id,
+            computation_id,
+            inputs,
+            deadline,
+            fee,
+        },
+    )
 }
 
 #[error_code]
 pub enum SonarSdkError {
-	#[msg("request_metadata does not match the Sonar PDA derived from request_id")]
-	InvalidRequestMetadataPda,
-	#[msg("result_account does not match the Sonar PDA derived from request_id")]
-	InvalidResultAccountPda,
+    #[msg("request_metadata does not match the Sonar PDA derived from request_id")]
+    InvalidRequestMetadataPda,
+    #[msg("result_account does not match the Sonar PDA derived from request_id")]
+    InvalidResultAccountPda,
 }

@@ -28,6 +28,98 @@ use sonar_common::types::ProverResponse;
 
 use crate::{dispatcher, listener};
 
+const GROTH16_PROOF_A_BYTES: usize = 64;
+const GROTH16_PROOF_B_BYTES: usize = 128;
+const GROTH16_PROOF_C_BYTES: usize = 64;
+const GROTH16_PROOF_BYTES: usize =
+    GROTH16_PROOF_A_BYTES + GROTH16_PROOF_B_BYTES + GROTH16_PROOF_C_BYTES;
+const GROTH16_PUBLIC_INPUT_BYTES: usize = 32;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct NormalizedCallbackPayload {
+    proof: Vec<u8>,
+    public_inputs: Vec<Vec<u8>>,
+    flattened_public_inputs: Vec<u8>,
+    result: Vec<u8>,
+    proof_a: Option<[u8; GROTH16_PROOF_A_BYTES]>,
+    proof_b: Option<[u8; GROTH16_PROOF_B_BYTES]>,
+    proof_c: Option<[u8; GROTH16_PROOF_C_BYTES]>,
+}
+
+fn normalize_callback_payload(
+    response: &ProverResponse,
+) -> anyhow::Result<NormalizedCallbackPayload> {
+    if response.proof.len() == GROTH16_PROOF_BYTES {
+        let proof_a: [u8; GROTH16_PROOF_A_BYTES] = response.proof[..GROTH16_PROOF_A_BYTES]
+            .try_into()
+            .expect("slice length should match proof_a length");
+        let proof_b: [u8; GROTH16_PROOF_B_BYTES] = response.proof
+            [GROTH16_PROOF_A_BYTES..GROTH16_PROOF_A_BYTES + GROTH16_PROOF_B_BYTES]
+            .try_into()
+            .expect("slice length should match proof_b length");
+        let proof_c: [u8; GROTH16_PROOF_C_BYTES] = response.proof
+            [GROTH16_PROOF_A_BYTES + GROTH16_PROOF_B_BYTES..]
+            .try_into()
+            .expect("slice length should match proof_c length");
+
+        let flattened_public_inputs =
+            flatten_public_inputs_exact(&response.public_inputs, GROTH16_PUBLIC_INPUT_BYTES)?;
+
+        return Ok(NormalizedCallbackPayload {
+            proof: [&proof_a[..], &proof_b[..], &proof_c[..]].concat(),
+            public_inputs: response.public_inputs.clone(),
+            flattened_public_inputs,
+            result: response.result.clone(),
+            proof_a: Some(proof_a),
+            proof_b: Some(proof_b),
+            proof_c: Some(proof_c),
+        });
+    }
+
+    if response.proof.is_empty() {
+        anyhow::bail!("callback response proof is empty");
+    }
+
+    let flattened_public_inputs = flatten_public_inputs_any(&response.public_inputs)?;
+
+    Ok(NormalizedCallbackPayload {
+        proof: response.proof.clone(),
+        public_inputs: response.public_inputs.clone(),
+        flattened_public_inputs,
+        result: response.result.clone(),
+        proof_a: None,
+        proof_b: None,
+        proof_c: None,
+    })
+}
+
+fn flatten_public_inputs_exact(public_inputs: &[Vec<u8>], width: usize) -> anyhow::Result<Vec<u8>> {
+    let mut flattened = Vec::with_capacity(public_inputs.len() * width);
+    for (index, input) in public_inputs.iter().enumerate() {
+        if input.len() != width {
+            anyhow::bail!(
+                "public input {index} has length {}; expected {width}",
+                input.len()
+            );
+        }
+        flattened.extend_from_slice(input);
+    }
+    Ok(flattened)
+}
+
+fn flatten_public_inputs_any(public_inputs: &[Vec<u8>]) -> anyhow::Result<Vec<u8>> {
+    if public_inputs.is_empty() {
+        anyhow::bail!("callback response has no public inputs");
+    }
+
+    let total_len = public_inputs.iter().map(Vec::len).sum();
+    let mut flattened = Vec::with_capacity(total_len);
+    for input in public_inputs {
+        flattened.extend_from_slice(input);
+    }
+    Ok(flattened)
+}
+
 // ---------------------------------------------------------------------------
 // Discriminator helpers
 // ---------------------------------------------------------------------------
@@ -224,6 +316,10 @@ async fn process_response(
     let meta =
         listener::decode_request_metadata(&account_data).context("decode RequestMetadata")?;
 
+    let payload = normalize_callback_payload(response).context("normalize callback payload")?;
+    let proof_len = payload.proof.len();
+    let flattened_public_inputs_len = payload.flattened_public_inputs.len();
+
     let callback_program = Pubkey::new_from_array(meta.callback_program);
 
     // Build instruction with prover-provided public inputs.
@@ -232,9 +328,16 @@ async fn process_response(
         &response.request_id,
         keypair.pubkey(),
         callback_program,
-        &response.proof,
-        &response.public_inputs,
-        &response.result,
+        &payload.proof,
+        &payload.public_inputs,
+        &payload.result,
+    );
+
+    info!(
+        proof_len,
+        flattened_public_inputs_len,
+        computation_id = %hex_encode(&meta.computation_id),
+        "formatted callback payload"
     );
 
     // Send with retries.
@@ -400,5 +503,84 @@ mod tests {
 
         assert_eq!(req_pda, expected_req);
         assert_eq!(res_pda, expected_res);
+    }
+
+    #[test]
+    fn normalize_groth16_payload_splits_proof_and_flattens_public_inputs() {
+        let proof: Vec<u8> = (0..GROTH16_PROOF_BYTES as u16)
+            .map(|value| value as u8)
+            .collect();
+        let public_inputs = vec![vec![0x11; 32], vec![0x22; 32]];
+        let response = ProverResponse {
+            request_id: [9u8; 32],
+            result: vec![0xAA, 0xBB],
+            proof: proof.clone(),
+            public_inputs: public_inputs.clone(),
+            gas_used: 123,
+        };
+
+        let payload = normalize_callback_payload(&response).expect("payload should normalize");
+
+        assert_eq!(payload.proof, proof);
+        assert_eq!(payload.proof_a.expect("proof_a"), proof[..64]);
+        assert_eq!(payload.proof_b.expect("proof_b"), proof[64..192]);
+        assert_eq!(payload.proof_c.expect("proof_c"), proof[192..256]);
+        assert_eq!(
+            payload.flattened_public_inputs,
+            [vec![0x11; 32], vec![0x22; 32]].concat()
+        );
+        assert_eq!(payload.public_inputs, public_inputs);
+    }
+
+    #[test]
+    fn normalize_groth16_payload_rejects_wrong_public_input_size() {
+        let response = ProverResponse {
+            request_id: [1u8; 32],
+            result: vec![7u8; 4],
+            proof: vec![3u8; GROTH16_PROOF_BYTES],
+            public_inputs: vec![vec![9u8; 31]],
+            gas_used: 1,
+        };
+
+        let error = normalize_callback_payload(&response).expect_err("payload should fail");
+        assert!(error
+            .to_string()
+            .contains("public input 0 has length 31; expected 32"));
+    }
+
+    #[test]
+    fn normalize_legacy_payload_preserves_existing_mvp_shape() {
+        let response = ProverResponse {
+            request_id: [2u8; 32],
+            result: vec![5u8; 8],
+            proof: b"historical-avg-mock-proof".to_vec(),
+            public_inputs: vec![vec![4u8; 8]],
+            gas_used: 42,
+        };
+
+        let payload = normalize_callback_payload(&response).expect("legacy payload should pass");
+
+        assert_eq!(payload.proof, response.proof);
+        assert_eq!(payload.public_inputs, response.public_inputs);
+        assert_eq!(payload.flattened_public_inputs, vec![4u8; 8]);
+        assert!(payload.proof_a.is_none());
+        assert!(payload.proof_b.is_none());
+        assert!(payload.proof_c.is_none());
+    }
+
+    #[test]
+    fn normalize_payload_rejects_empty_legacy_proof() {
+        let response = ProverResponse {
+            request_id: [3u8; 32],
+            result: vec![],
+            proof: vec![],
+            public_inputs: vec![vec![1u8; 8]],
+            gas_used: 0,
+        };
+
+        let error = normalize_callback_payload(&response).expect_err("empty proof should fail");
+        assert!(error
+            .to_string()
+            .contains("callback response proof is empty"));
     }
 }

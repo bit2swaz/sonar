@@ -6,12 +6,33 @@ use anchor_lang::prelude::*;
 pub struct VerifierRegistry {
     pub computation_id: [u8; 32],
     pub authority: Pubkey,
-    pub vkey: [u8; 128],
+    pub vk_alpha_g1: [u8; 64],
+    pub vk_beta_g2: [u8; 128],
+    pub vk_gamme_g2: [u8; 128],
+    pub vk_delta_g2: [u8; 128],
+    pub vk_ic: Vec<[u8; 64]>,
     pub bump: u8,
 }
 
 impl VerifierRegistry {
-    pub const LEN: usize = 8 + 32 + 32 + 128 + 1;
+    pub fn space_for(vk_ic_len: usize) -> usize {
+        8 + 32 + 32 + 64 + 128 + 128 + 128 + 4 + (vk_ic_len * 64) + 1
+    }
+
+    pub fn public_inputs_len(&self) -> Option<usize> {
+        self.vk_ic.len().checked_sub(1)
+    }
+
+    pub fn groth16_verifying_key(&self) -> Groth16Verifyingkey<'_> {
+        Groth16Verifyingkey {
+            nr_pubinputs: self.vk_ic.len(),
+            vk_alpha_g1: self.vk_alpha_g1,
+            vk_beta_g2: self.vk_beta_g2,
+            vk_gamme_g2: self.vk_gamme_g2,
+            vk_delta_g2: self.vk_delta_g2,
+            vk_ic: self.vk_ic.as_slice(),
+        }
+    }
 }
 
 pub const DEMO_COMPUTATION_ID: [u8; 32] = [
@@ -24,11 +45,7 @@ pub const HISTORICAL_AVG_COMPUTATION_ID: [u8; 32] = [
     144, 62, 32, 159, 91, 227, 160, 78, 252, 195, 98, 100,
 ];
 
-pub const DEMO_PUBLIC_INPUTS_LEN: usize = 9;
-pub const HISTORICAL_AVG_PUBLIC_INPUT_BYTES: usize = 8;
-
-pub const HISTORICAL_AVG_VERIFYING_KEY: Groth16Verifyingkey<'static> = DEMO_VERIFYING_KEY;
-
+#[cfg(test)]
 pub const DEMO_VERIFYING_KEY: Groth16Verifyingkey<'static> = Groth16Verifyingkey {
     nr_pubinputs: 10,
     vk_alpha_g1: [

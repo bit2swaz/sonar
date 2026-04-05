@@ -178,11 +178,13 @@ pub fn build_callback_instruction_data(
 /// Accounts (in Anchor order):
 /// 0. `request_metadata` — mutable, not signer (PDA)
 /// 1. `result_account`   — mutable, not signer (PDA)
-/// 2. `prover`           — mutable, signer (coordinator keypair)
-/// 3. `callback_program` — not mutable, not signer
+/// 2. `verifier_registry` — read-only, not signer (PDA)
+/// 3. `prover`            — mutable, signer (coordinator keypair)
+/// 4. `callback_program`  — not mutable, not signer
 pub fn build_callback_instruction(
     program_id: Pubkey,
     request_id: &[u8; 32],
+    computation_id: &[u8; 32],
     prover_pubkey: Pubkey,
     callback_program: Pubkey,
     proof: &[u8],
@@ -193,10 +195,13 @@ pub fn build_callback_instruction(
         Pubkey::find_program_address(&[b"request", request_id.as_ref()], &program_id);
     let (result_account_pda, _) =
         Pubkey::find_program_address(&[b"result", request_id.as_ref()], &program_id);
+    let (verifier_registry_pda, _) =
+        Pubkey::find_program_address(&[b"verifier", computation_id.as_ref()], &program_id);
 
     let accounts = vec![
         AccountMeta::new(request_metadata_pda, false),
         AccountMeta::new(result_account_pda, false),
+        AccountMeta::new_readonly(verifier_registry_pda, false),
         AccountMeta::new(prover_pubkey, true),
         AccountMeta::new_readonly(callback_program, false),
     ];
@@ -326,6 +331,7 @@ async fn process_response(
     let (ix, _, _) = build_callback_instruction(
         *program_id,
         &response.request_id,
+        &meta.computation_id,
         keypair.pubkey(),
         callback_program,
         &payload.proof,
@@ -470,39 +476,62 @@ mod tests {
     fn instruction_has_four_accounts() {
         let program_id = Pubkey::new_unique();
         let request_id = [0u8; 32];
+        let computation_id = [1u8; 32];
         let prover = Pubkey::new_unique();
         let cb_prog = Pubkey::new_unique();
 
-        let (ix, _, _) =
-            build_callback_instruction(program_id, &request_id, prover, cb_prog, &[], &[], &[]);
+        let (ix, _, _) = build_callback_instruction(
+            program_id,
+            &request_id,
+            &computation_id,
+            prover,
+            cb_prog,
+            &[],
+            &[],
+            &[],
+        );
 
-        assert_eq!(ix.accounts.len(), 4);
-        // Account 2 (prover) must be a signer.
-        assert!(ix.accounts[2].is_signer);
+        assert_eq!(ix.accounts.len(), 5);
+        // Account 2 (verifier registry) must be read-only and not signer.
+        assert!(!ix.accounts[2].is_writable && !ix.accounts[2].is_signer);
+        // Account 3 (prover) must be a signer.
+        assert!(ix.accounts[3].is_signer);
         // Accounts 0 and 1 must be mutable but not signers.
         assert!(ix.accounts[0].is_writable && !ix.accounts[0].is_signer);
         assert!(ix.accounts[1].is_writable && !ix.accounts[1].is_signer);
-        // Account 3 (callback_program) must be read-only.
-        assert!(!ix.accounts[3].is_writable && !ix.accounts[3].is_signer);
+        // Account 4 (callback_program) must be read-only.
+        assert!(!ix.accounts[4].is_writable && !ix.accounts[4].is_signer);
     }
 
     #[test]
     fn pdas_are_derived_from_request_id() {
         let program_id = Pubkey::new_unique();
         let request_id = [7u8; 32];
+        let computation_id = [8u8; 32];
         let prover = Pubkey::new_unique();
         let cb_prog = Pubkey::new_unique();
 
-        let (_, req_pda, res_pda) =
-            build_callback_instruction(program_id, &request_id, prover, cb_prog, &[], &[], &[]);
+        let (ix, req_pda, res_pda) = build_callback_instruction(
+            program_id,
+            &request_id,
+            &computation_id,
+            prover,
+            cb_prog,
+            &[],
+            &[],
+            &[],
+        );
 
         let (expected_req, _) =
             Pubkey::find_program_address(&[b"request", &request_id], &program_id);
         let (expected_res, _) =
             Pubkey::find_program_address(&[b"result", &request_id], &program_id);
+        let (expected_verifier, _) =
+            Pubkey::find_program_address(&[b"verifier", &computation_id], &program_id);
 
         assert_eq!(req_pda, expected_req);
         assert_eq!(res_pda, expected_res);
+        assert_eq!(ix.accounts[2].pubkey, expected_verifier);
     }
 
     #[test]

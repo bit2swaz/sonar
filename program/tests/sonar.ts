@@ -81,6 +81,21 @@ const PUBLIC_INPUTS: Buffer[] = [
 const SONAR_PROGRAM_ID = new PublicKey("EE2sQ2VRa1hY3qjPQ1PEwuPZX6dGwTZwHMCumWrGn3sV");
 const ECHO_CALLBACK_ID = new PublicKey("3RBU9G6Mws9nS8bQPg2cVRbS2v7CgsjAvv2MwmTcmbyA");
 
+type DemoVerifyingKeyFixture = {
+  vkAlphaG1: number[];
+  vkBetaG2: number[];
+  vkGammeG2: number[];
+  vkDeltaG2: number[];
+  vkIc: number[][];
+};
+
+const DEMO_VERIFYING_KEY = JSON.parse(
+  readFileSync(
+    join(process.cwd(), "program", "tests", "fixtures", "demo_verifying_key.json"),
+    "utf8"
+  )
+) as DemoVerifyingKeyFixture;
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -97,7 +112,9 @@ function verifierPDA(programId: PublicKey, computationId: Buffer): [PublicKey, n
   return PublicKey.findProgramAddressSync([Buffer.from("verifier"), computationId], programId);
 }
 
-const VERIFIER_REGISTRY_ACCOUNT_SIZE = 8 + 32 + 32 + 128 + 1;
+function verifierRegistryAccountSize(vkIcLen: number): number {
+  return 8 + 32 + 32 + 64 + 128 + 128 + 128 + 4 + vkIcLen * 64 + 1;
+}
 
 function randomId(): Buffer {
   return Buffer.from(Keypair.generate().publicKey.toBytes());
@@ -149,6 +166,7 @@ describe("Sonar ZK Coprocessor — Phase 2.3 Integration Tests", () => {
   let sonarProgramId: PublicKey;
   let echoCallbackId: PublicKey;
   let provider: anchor.AnchorProvider;
+  let demoVerifierRegistry: PublicKey;
 
   before(async () => {
     provider = anchor.AnchorProvider.env();
@@ -169,7 +187,39 @@ describe("Sonar ZK Coprocessor — Phase 2.3 Integration Tests", () => {
       20 * LAMPORTS_PER_SOL
     );
     await provider.connection.confirmTransaction(sig, "confirmed");
+
+    [demoVerifierRegistry] = verifierPDA(sonarProgramId, DEMO_COMPUTATION_ID);
+    await ensureVerifierRegistered(demoVerifierRegistry, DEMO_COMPUTATION_ID);
   });
+
+  async function ensureVerifierRegistered(
+    verifierRegistry: PublicKey,
+    computationId: Buffer,
+    verifyingKey: DemoVerifyingKeyFixture = DEMO_VERIFYING_KEY
+  ): Promise<PublicKey> {
+    const existing = await provider.connection.getAccountInfo(verifierRegistry, "confirmed");
+    if (existing !== null) {
+      return verifierRegistry;
+    }
+
+    await program.methods
+      .registerVerifier({
+        computationId: Array.from(computationId),
+        vkAlphaG1: verifyingKey.vkAlphaG1,
+        vkBetaG2: verifyingKey.vkBetaG2,
+        vkGammeG2: verifyingKey.vkGammeG2,
+        vkDeltaG2: verifyingKey.vkDeltaG2,
+        vkIc: verifyingKey.vkIc,
+      })
+      .accounts({
+        authority: provider.wallet.publicKey,
+        verifierRegistry,
+        systemProgram: SystemProgram.programId,
+      })
+      .rpc();
+
+    return verifierRegistry;
+  }
 
   // ==========================================================================
   // ACCESS CONTROL (3 tests)
@@ -178,20 +228,18 @@ describe("Sonar ZK Coprocessor — Phase 2.3 Integration Tests", () => {
   describe("Access Control", () => {
     it("registerVerifier creates and populates verifier registry PDA", async () => {
       const computationId = Buffer.from(Keypair.generate().publicKey.toBytes());
-      const vkey = Buffer.from(Array.from({ length: 128 }, (_, index) => (index * 7) % 256));
       const [verifierRegistry] = verifierPDA(sonarProgramId, computationId);
+      const customVerifyingKey: DemoVerifyingKeyFixture = {
+        vkAlphaG1: DEMO_VERIFYING_KEY.vkAlphaG1.map((value, index) => (value + index) % 256),
+        vkBetaG2: DEMO_VERIFYING_KEY.vkBetaG2.map((value, index) => (value + index) % 256),
+        vkGammeG2: DEMO_VERIFYING_KEY.vkGammeG2.map((value, index) => (value + index) % 256),
+        vkDeltaG2: DEMO_VERIFYING_KEY.vkDeltaG2.map((value, index) => (value + index) % 256),
+        vkIc: DEMO_VERIFYING_KEY.vkIc.map((row, rowIndex) =>
+          row.map((value, columnIndex) => (value + rowIndex + columnIndex) % 256)
+        ),
+      };
 
-      await program.methods
-        .registerVerifier({
-          computationId: Array.from(computationId),
-          vkey: Array.from(vkey),
-        })
-        .accounts({
-          authority: provider.wallet.publicKey,
-          verifierRegistry,
-          systemProgram: SystemProgram.programId,
-        })
-        .rpc();
+      await ensureVerifierRegistered(verifierRegistry, computationId, customVerifyingKey);
 
       const registry = await program.account.verifierRegistry.fetch(verifierRegistry);
       assert.deepEqual(
@@ -203,11 +251,39 @@ describe("Sonar ZK Coprocessor — Phase 2.3 Integration Tests", () => {
         (registry.authority as PublicKey).equals(provider.wallet.publicKey),
         "authority"
       );
-      assert.deepEqual(Array.from(registry.vkey as number[]), Array.from(vkey), "vkey");
+      assert.deepEqual(
+        Array.from(registry.vkAlphaG1 as number[]),
+        customVerifyingKey.vkAlphaG1,
+        "vk_alpha_g1"
+      );
+      assert.deepEqual(
+        Array.from(registry.vkBetaG2 as number[]),
+        customVerifyingKey.vkBetaG2,
+        "vk_beta_g2"
+      );
+      assert.deepEqual(
+        Array.from(registry.vkGammeG2 as number[]),
+        customVerifyingKey.vkGammeG2,
+        "vk_gamme_g2"
+      );
+      assert.deepEqual(
+        Array.from(registry.vkDeltaG2 as number[]),
+        customVerifyingKey.vkDeltaG2,
+        "vk_delta_g2"
+      );
+      assert.deepEqual(
+        (registry.vkIc as number[][]).map((row) => Array.from(row)),
+        customVerifyingKey.vkIc,
+        "vk_ic"
+      );
 
       const accountInfo = await provider.connection.getAccountInfo(verifierRegistry, "confirmed");
       assert.isNotNull(accountInfo, "verifier registry account must exist");
-      assert.strictEqual(accountInfo!.data.length, VERIFIER_REGISTRY_ACCOUNT_SIZE, "account size");
+      assert.strictEqual(
+        accountInfo!.data.length,
+        verifierRegistryAccountSize(customVerifyingKey.vkIc.length),
+        "account size"
+      );
     });
 
     it("rejects refund from a different signer (RefundPayerMismatch)", async () => {
@@ -348,7 +424,7 @@ describe("Sonar ZK Coprocessor — Phase 2.3 Integration Tests", () => {
 
       await program.methods
         .callback({ proof: VALID_PROOF, publicInputs: PUBLIC_INPUTS, result: resultPayload })
-        .accounts({ requestMetadata: reqPda, resultAccount: resPda, prover: provider.wallet.publicKey, callbackProgram: echoCallbackId })
+        .accounts({ requestMetadata: reqPda, resultAccount: resPda, verifierRegistry: demoVerifierRegistry, prover: provider.wallet.publicKey, callbackProgram: echoCallbackId })
         .remainingAccounts([])
         .rpc();
 
@@ -377,7 +453,7 @@ describe("Sonar ZK Coprocessor — Phase 2.3 Integration Tests", () => {
       await expectError(async () => {
         await program.methods
           .callback({ proof: badProof, publicInputs: PUBLIC_INPUTS, result: Buffer.alloc(0) })
-          .accounts({ requestMetadata: reqPda, resultAccount: resPda, prover: provider.wallet.publicKey, callbackProgram: echoCallbackId })
+          .accounts({ requestMetadata: reqPda, resultAccount: resPda, verifierRegistry: demoVerifierRegistry, prover: provider.wallet.publicKey, callbackProgram: echoCallbackId })
           .remainingAccounts([])
           .rpc();
       }, "ProofVerificationFailed");
@@ -402,7 +478,7 @@ describe("Sonar ZK Coprocessor — Phase 2.3 Integration Tests", () => {
       await expectError(async () => {
         await program.methods
           .callback({ proof: VALID_PROOF, publicInputs: PUBLIC_INPUTS, result: Buffer.alloc(0) })
-          .accounts({ requestMetadata: reqA, resultAccount: resB, prover: provider.wallet.publicKey, callbackProgram: echoCallbackId })
+          .accounts({ requestMetadata: reqA, resultAccount: resB, verifierRegistry: demoVerifierRegistry, prover: provider.wallet.publicKey, callbackProgram: echoCallbackId })
           .remainingAccounts([])
           .rpc();
       }, "InvalidRequestId");
@@ -425,7 +501,7 @@ describe("Sonar ZK Coprocessor — Phase 2.3 Integration Tests", () => {
       await expectError(async () => {
         await program.methods
           .callback({ proof: VALID_PROOF, publicInputs: PUBLIC_INPUTS, result: Buffer.alloc(0) })
-          .accounts({ requestMetadata: reqPda, resultAccount: resPda, prover: provider.wallet.publicKey, callbackProgram: echoCallbackId })
+          .accounts({ requestMetadata: reqPda, resultAccount: resPda, verifierRegistry: demoVerifierRegistry, prover: provider.wallet.publicKey, callbackProgram: echoCallbackId })
           .remainingAccounts([])
           .rpc();
       }, "DeadlinePassed");
@@ -447,7 +523,7 @@ describe("Sonar ZK Coprocessor — Phase 2.3 Integration Tests", () => {
 
       await program.methods
         .callback({ proof: VALID_PROOF, publicInputs: PUBLIC_INPUTS, result: Buffer.alloc(0) })
-        .accounts({ requestMetadata: reqPda, resultAccount: resPda, prover: provider.wallet.publicKey, callbackProgram: echoCallbackId })
+        .accounts({ requestMetadata: reqPda, resultAccount: resPda, verifierRegistry: demoVerifierRegistry, prover: provider.wallet.publicKey, callbackProgram: echoCallbackId })
         .remainingAccounts([])
         .rpc();
 
@@ -528,14 +604,14 @@ describe("Sonar ZK Coprocessor — Phase 2.3 Integration Tests", () => {
 
       await program.methods
         .callback({ proof: VALID_PROOF, publicInputs: PUBLIC_INPUTS, result: Buffer.from([0x01]) })
-        .accounts({ requestMetadata: reqPda, resultAccount: resPda, prover: provider.wallet.publicKey, callbackProgram: echoCallbackId })
+        .accounts({ requestMetadata: reqPda, resultAccount: resPda, verifierRegistry: demoVerifierRegistry, prover: provider.wallet.publicKey, callbackProgram: echoCallbackId })
         .remainingAccounts([])
         .rpc();
 
       await expectError(async () => {
         await program.methods
           .callback({ proof: VALID_PROOF, publicInputs: PUBLIC_INPUTS, result: Buffer.from([0x02]) })
-          .accounts({ requestMetadata: reqPda, resultAccount: resPda, prover: provider.wallet.publicKey, callbackProgram: echoCallbackId })
+          .accounts({ requestMetadata: reqPda, resultAccount: resPda, verifierRegistry: demoVerifierRegistry, prover: provider.wallet.publicKey, callbackProgram: echoCallbackId })
           .remainingAccounts([])
           .rpc();
       }, "RequestNotPending");
@@ -560,7 +636,7 @@ describe("Sonar ZK Coprocessor — Phase 2.3 Integration Tests", () => {
       await expectError(async () => {
         await program.methods
           .callback({ proof: VALID_PROOF, publicInputs: PUBLIC_INPUTS, result: Buffer.alloc(0) })
-          .accounts({ requestMetadata: reqX, resultAccount: resY, prover: provider.wallet.publicKey, callbackProgram: echoCallbackId })
+          .accounts({ requestMetadata: reqX, resultAccount: resY, verifierRegistry: demoVerifierRegistry, prover: provider.wallet.publicKey, callbackProgram: echoCallbackId })
           .remainingAccounts([])
           .rpc();
       }, "InvalidRequestId");

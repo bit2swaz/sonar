@@ -3,13 +3,13 @@ use std::time::Duration;
 use anyhow::{anyhow, bail, Context, Result};
 use solana_sdk::{hash::hash, pubkey::Pubkey};
 use sqlx::{
+    migrate::Migrator,
     postgres::PgRow,
     postgres::{PgPoolOptions, Postgres},
     PgPool, QueryBuilder, Row,
 };
 
-const INIT_ACCOUNT_HISTORY_MIGRATION: &str =
-    include_str!("../migrations/202603310001_init_account_history.sql");
+static MIGRATOR: Migrator = sqlx::migrate!();
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DatabaseConfig {
@@ -110,11 +110,10 @@ pub async fn connect_pool(config: &DatabaseConfig) -> Result<PgPool> {
 }
 
 pub async fn run_migrations(pool: &PgPool) -> Result<()> {
-    sqlx::raw_sql(INIT_ACCOUNT_HISTORY_MIGRATION)
-        .execute(pool)
+    MIGRATOR
+        .run(pool)
         .await
         .context("failed to run indexer migrations")
-        .map(|_| ())
 }
 
 pub async fn insert_account_batch(pool: &PgPool, updates: &[AccountUpdate]) -> Result<()> {
@@ -479,7 +478,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_migrations_create_expected_tables() -> Result<()> {
+    async fn test_migrations_create_expected_tables_and_indexes() -> Result<()> {
         with_test_pool(|pool| async move {
             let mut table_names = sqlx::query_scalar::<_, String>(
                 "SELECT table_name \
@@ -494,11 +493,57 @@ mod tests {
             assert_eq!(
                 table_names,
                 vec![
+                    "_sqlx_migrations".to_string(),
                     "account_history".to_string(),
                     "request_tracking".to_string(),
                     "slot_metadata".to_string(),
                 ]
             );
+
+            let index_rows = sqlx::query_as::<_, (String, String)>(
+                "SELECT indexname, indexdef \
+                 FROM pg_indexes \
+                 WHERE schemaname = 'public' AND tablename = 'account_history' \
+                 ORDER BY indexname",
+            )
+            .fetch_all(&pool)
+            .await?;
+
+            let index_names = index_rows
+                .iter()
+                .map(|(index_name, _)| index_name.clone())
+                .collect::<Vec<_>>();
+            assert!(
+                index_names.contains(&"account_history_pubkey_slot_desc_idx".to_string()),
+                "expected compound pubkey/slot desc index to exist"
+            );
+            assert!(
+                index_names.contains(&"account_history_slot_idx".to_string()),
+                "expected slot index to exist"
+            );
+            assert!(
+                !index_names.contains(&"account_history_pubkey_slot_idx".to_string()),
+                "legacy wider compound index should be removed by follow-up migration"
+            );
+
+            let compound_index = index_rows
+                .iter()
+                .find(|(index_name, _)| index_name == "account_history_pubkey_slot_desc_idx")
+                .map(|(_, index_def)| index_def)
+                .context("missing account_history_pubkey_slot_desc_idx definition")?;
+            assert!(
+                compound_index.contains("(pubkey, slot DESC)"),
+                "expected compound index definition to target (pubkey, slot DESC), got: {compound_index}"
+            );
+
+            let applied_versions = sqlx::query_scalar::<_, i64>(
+                "SELECT version FROM _sqlx_migrations ORDER BY version",
+            )
+            .fetch_all(&pool)
+            .await?;
+            assert_eq!(applied_versions, vec![202603310001_i64, 202604050000_i64]);
+
+            run_migrations(&pool).await?;
 
             Ok(())
         })

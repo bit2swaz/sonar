@@ -12,9 +12,12 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use anyhow::Context as _;
+use futures_util::{future::BoxFuture, FutureExt};
 use solana_client::nonblocking::rpc_client::RpcClient;
+use solana_client::{client_error::Result as ClientResult, rpc_response::RpcPrioritizationFee};
 use solana_sdk::{
     commitment_config::CommitmentConfig,
+    compute_budget::ComputeBudgetInstruction,
     hash::hash,
     instruction::{AccountMeta, Instruction},
     pubkey::Pubkey,
@@ -34,6 +37,7 @@ const GROTH16_PROOF_C_BYTES: usize = 64;
 const GROTH16_PROOF_BYTES: usize =
     GROTH16_PROOF_A_BYTES + GROTH16_PROOF_B_BYTES + GROTH16_PROOF_C_BYTES;
 const GROTH16_PUBLIC_INPUT_BYTES: usize = 32;
+const PRIORITY_FEE_PERCENTILE: usize = 75;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct NormalizedCallbackPayload {
@@ -217,6 +221,71 @@ pub fn build_callback_instruction(
     (ix, request_metadata_pda, result_account_pda)
 }
 
+trait PrioritizationFeeClient {
+    fn get_recent_prioritization_fees<'a>(
+        &'a self,
+        writable_accounts: &'a [Pubkey],
+    ) -> BoxFuture<'a, ClientResult<Vec<RpcPrioritizationFee>>>;
+}
+
+impl PrioritizationFeeClient for RpcClient {
+    fn get_recent_prioritization_fees<'a>(
+        &'a self,
+        writable_accounts: &'a [Pubkey],
+    ) -> BoxFuture<'a, ClientResult<Vec<RpcPrioritizationFee>>> {
+        RpcClient::get_recent_prioritization_fees(self, writable_accounts).boxed()
+    }
+}
+
+fn estimate_priority_fee_micro_lamports(samples: &[RpcPrioritizationFee]) -> u64 {
+    let mut fees = samples
+        .iter()
+        .map(|sample| sample.prioritization_fee)
+        .filter(|fee| *fee > 0)
+        .collect::<Vec<_>>();
+
+    if fees.is_empty() {
+        fees = samples
+            .iter()
+            .map(|sample| sample.prioritization_fee)
+            .collect::<Vec<_>>();
+    }
+
+    if fees.is_empty() {
+        return 0;
+    }
+
+    fees.sort_unstable();
+    let rank = (fees.len() * PRIORITY_FEE_PERCENTILE).div_ceil(100);
+    let index = rank.saturating_sub(1).min(fees.len() - 1);
+    fees[index]
+}
+
+async fn fetch_priority_fee_estimate<C>(
+    client: &C,
+    writable_accounts: &[Pubkey],
+) -> anyhow::Result<u64>
+where
+    C: PrioritizationFeeClient + ?Sized,
+{
+    let fees = client
+        .get_recent_prioritization_fees(writable_accounts)
+        .await
+        .context("getRecentPrioritizationFees")?;
+
+    Ok(estimate_priority_fee_micro_lamports(&fees))
+}
+
+fn build_callback_transaction_instructions(
+    callback_instruction: Instruction,
+    priority_fee_micro_lamports: u64,
+) -> Vec<Instruction> {
+    vec![
+        ComputeBudgetInstruction::set_compute_unit_price(priority_fee_micro_lamports),
+        callback_instruction,
+    ]
+}
+
 // ---------------------------------------------------------------------------
 // Config
 // ---------------------------------------------------------------------------
@@ -339,9 +408,30 @@ async fn process_response(
         &payload.result,
     );
 
+    let writable_accounts = ix
+        .accounts
+        .iter()
+        .filter(|account| account.is_writable)
+        .map(|account| account.pubkey)
+        .collect::<Vec<_>>();
+
+    let priority_fee_micro_lamports = match fetch_priority_fee_estimate(rpc, &writable_accounts).await {
+        Ok(priority_fee_micro_lamports) => priority_fee_micro_lamports,
+        Err(error) => {
+            warn!(
+                error = ?error,
+                "priority fee estimation failed; falling back to zero micro-lamports"
+            );
+            0
+        },
+    };
+
+    let instructions = build_callback_transaction_instructions(ix, priority_fee_micro_lamports);
+
     info!(
         proof_len,
         flattened_public_inputs_len,
+        priority_fee_micro_lamports,
         computation_id = %hex_encode(&meta.computation_id),
         "formatted callback payload"
     );
@@ -354,7 +444,7 @@ async fn process_response(
             .context("get_latest_blockhash")?;
 
         let tx = Transaction::new_signed_with_payer(
-            std::slice::from_ref(&ix),
+            &instructions,
             Some(&keypair.pubkey()),
             &[keypair],
             blockhash,
@@ -388,6 +478,7 @@ fn hex_encode(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
 
     // --- callback_discriminator ---
 
@@ -532,6 +623,104 @@ mod tests {
         assert_eq!(req_pda, expected_req);
         assert_eq!(res_pda, expected_res);
         assert_eq!(ix.accounts[2].pubkey, expected_verifier);
+    }
+
+    #[test]
+    fn estimate_priority_fee_uses_nonzero_p75_sample() {
+        let samples = vec![
+            RpcPrioritizationFee {
+                slot: 100,
+                prioritization_fee: 0,
+            },
+            RpcPrioritizationFee {
+                slot: 101,
+                prioritization_fee: 1_000,
+            },
+            RpcPrioritizationFee {
+                slot: 102,
+                prioritization_fee: 2_000,
+            },
+            RpcPrioritizationFee {
+                slot: 103,
+                prioritization_fee: 3_000,
+            },
+        ];
+
+        assert_eq!(estimate_priority_fee_micro_lamports(&samples), 3_000);
+    }
+
+    #[test]
+    fn callback_transaction_instructions_prepend_compute_budget_price() {
+        let callback_instruction = Instruction {
+            program_id: Pubkey::new_unique(),
+            accounts: vec![AccountMeta::new(Pubkey::new_unique(), false)],
+            data: vec![1, 2, 3],
+        };
+
+        let instructions =
+            build_callback_transaction_instructions(callback_instruction.clone(), 42_000);
+
+        assert_eq!(instructions.len(), 2);
+        assert_eq!(
+            instructions[0],
+            ComputeBudgetInstruction::set_compute_unit_price(42_000)
+        );
+        assert_eq!(instructions[1], callback_instruction);
+    }
+
+    struct MockPrioritizationFeeClient {
+        fees: Vec<RpcPrioritizationFee>,
+        writable_accounts: Mutex<Vec<Pubkey>>,
+    }
+
+    impl PrioritizationFeeClient for MockPrioritizationFeeClient {
+        fn get_recent_prioritization_fees<'a>(
+            &'a self,
+            writable_accounts: &'a [Pubkey],
+        ) -> BoxFuture<'a, ClientResult<Vec<RpcPrioritizationFee>>> {
+            *self.writable_accounts.lock().expect("lock writable accounts") =
+                writable_accounts.to_vec();
+            futures_util::future::ready(Ok(self.fees.clone())).boxed()
+        }
+    }
+
+    #[tokio::test]
+    async fn fetch_priority_fee_estimate_uses_rpc_response_for_writable_accounts() {
+        let writable_accounts = vec![Pubkey::new_unique(), Pubkey::new_unique()];
+        let client = MockPrioritizationFeeClient {
+            fees: vec![
+                RpcPrioritizationFee {
+                    slot: 1,
+                    prioritization_fee: 500,
+                },
+                RpcPrioritizationFee {
+                    slot: 2,
+                    prioritization_fee: 2_000,
+                },
+                RpcPrioritizationFee {
+                    slot: 3,
+                    prioritization_fee: 5_000,
+                },
+                RpcPrioritizationFee {
+                    slot: 4,
+                    prioritization_fee: 9_000,
+                },
+            ],
+            writable_accounts: Mutex::new(Vec::new()),
+        };
+
+        let estimate = fetch_priority_fee_estimate(&client, &writable_accounts)
+            .await
+            .expect("priority fee estimate should succeed");
+
+        assert_eq!(estimate, 5_000);
+        assert_eq!(
+            *client
+                .writable_accounts
+                .lock()
+                .expect("lock writable accounts"),
+            writable_accounts
+        );
     }
 
     #[test]

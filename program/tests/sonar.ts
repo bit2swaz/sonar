@@ -406,7 +406,7 @@ describe("Sonar ZK Coprocessor — Phase 2.3 Integration Tests", () => {
   });
 
   // ==========================================================================
-  // CALLBACK FLOW (5 tests)
+  // CALLBACK FLOW (6 tests)
   // ==========================================================================
 
   describe("Callback Flow", () => {
@@ -436,7 +436,7 @@ describe("Sonar ZK Coprocessor — Phase 2.3 Integration Tests", () => {
       assert.deepEqual(Array.from(res.result as number[]), Array.from(resultPayload), "result payload");
     });
 
-    it("callback with invalid proof fails with ProofVerificationFailed", async () => {
+    it("Rejects callback with cryptographically invalid proof", async () => {
       const rid = randomId();
       const [reqPda] = requestPDA(sonarProgramId, rid);
       const [resPda] = resultPDA(sonarProgramId, rid);
@@ -453,6 +453,29 @@ describe("Sonar ZK Coprocessor — Phase 2.3 Integration Tests", () => {
       await expectError(async () => {
         await program.methods
           .callback({ proof: badProof, publicInputs: PUBLIC_INPUTS, result: Buffer.alloc(0) })
+          .accounts({ requestMetadata: reqPda, resultAccount: resPda, verifierRegistry: demoVerifierRegistry, prover: provider.wallet.publicKey, callbackProgram: echoCallbackId })
+          .remainingAccounts([])
+          .rpc();
+      }, "ProofVerificationFailed");
+    });
+
+    it("rejects callback with cryptographically invalid public inputs", async () => {
+      const rid = randomId();
+      const [reqPda] = requestPDA(sonarProgramId, rid);
+      const [resPda] = resultPDA(sonarProgramId, rid);
+      const slot = await provider.connection.getSlot();
+
+      await program.methods
+        .request({ requestId: Array.from(rid), computationId: Array.from(DEMO_COMPUTATION_ID), inputs: Buffer.alloc(0), deadline: new anchor.BN(slot + 5000), fee: new anchor.BN(100_000) })
+        .accounts({ payer: provider.wallet.publicKey, callbackProgram: echoCallbackId, requestMetadata: reqPda, resultAccount: resPda, systemProgram: SystemProgram.programId })
+        .rpc();
+
+      const badPublicInputs = PUBLIC_INPUTS.map((value) => Buffer.from(value));
+      badPublicInputs[0][0] ^= 0x01;
+
+      await expectError(async () => {
+        await program.methods
+          .callback({ proof: VALID_PROOF, publicInputs: badPublicInputs, result: Buffer.alloc(0) })
           .accounts({ requestMetadata: reqPda, resultAccount: resPda, verifierRegistry: demoVerifierRegistry, prover: provider.wallet.publicKey, callbackProgram: echoCallbackId })
           .remainingAccounts([])
           .rpc();

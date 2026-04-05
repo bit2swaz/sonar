@@ -402,7 +402,7 @@ fn send_transaction(
         blockhash,
     );
 
-    // Solana's wire protocol imposes a hard 1 232-byte limit per packet.
+    // Solana's wire protocol imposes a hard 1232-byte limit per packet.
     // Detect an oversized transaction before attempting submission so the
     // caller receives an actionable error instead of a confusing RPC failure.
     // This commonly occurs when `register_verifier` embeds a large Groth16

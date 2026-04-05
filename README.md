@@ -135,6 +135,12 @@ cargo build --workspace
 anchor build
 ```
 
+to generate deterministic prover metadata artifacts for the currently registered computations:
+
+```bash
+cargo run --bin sonar-export-artifacts
+```
+
 if `anchor build` fails because of the Solana platform-tools cargo version, use the helper script instead:
 
 ```bash

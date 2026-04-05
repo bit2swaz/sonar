@@ -30,6 +30,10 @@ path = "bin/indexer.rs"
 name = "sonar-prover"
 path = "bin/prover.rs"
 
+[[bin]]
+name = "sonar-export-artifacts"
+path = "bin/export_artifacts.rs"
+
 [dependencies]
 anyhow             = { workspace = true }
 tokio              = { workspace = true }

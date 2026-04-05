@@ -1,3 +1,4 @@
+pub mod artifacts;
 pub mod groth16_wrapper;
 pub mod registry;
 pub mod service;
@@ -11,12 +12,23 @@ use crate::{
     sp1_wrapper::build_sp1_program,
 };
 
+pub use artifacts::{
+    export_registered_artifacts_to_dir, export_verifier_artifact, ComputationVerifierArtifact,
+    Groth16VerifierArtifact,
+};
+
 pub fn fibonacci_computation_id() -> anyhow::Result<ComputationId> {
     registry::fibonacci_computation_id()
 }
 
 pub fn historical_avg_computation_id() -> anyhow::Result<ComputationId> {
     registry::historical_avg_computation_id()
+}
+
+pub fn export_registered_artifacts(
+    output_dir: impl AsRef<std::path::Path>,
+) -> anyhow::Result<Vec<std::path::PathBuf>> {
+    export_registered_artifacts_to_dir(output_dir)
 }
 
 pub fn prove(

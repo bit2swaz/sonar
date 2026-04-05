@@ -29,23 +29,26 @@ pub fn historical_avg_computation_id() -> anyhow::Result<ComputationId> {
     computation_id_for_elf(HISTORICAL_AVG_ELF_PATH)
 }
 
-pub fn resolve_computation(computation_id: &[u8; 32]) -> anyhow::Result<RegisteredComputation> {
-    let fibonacci_id = fibonacci_computation_id()?;
-    if *computation_id == fibonacci_id {
-        return Ok(RegisteredComputation {
+pub fn registered_computations() -> anyhow::Result<Vec<RegisteredComputation>> {
+    Ok(vec![
+        RegisteredComputation {
             name: "fibonacci",
             elf_path: FIBONACCI_ELF_PATH,
-            computation_id: fibonacci_id,
-        });
-    }
-
-    let historical_avg_id = historical_avg_computation_id()?;
-    if *computation_id == historical_avg_id {
-        return Ok(RegisteredComputation {
+            computation_id: fibonacci_computation_id()?,
+        },
+        RegisteredComputation {
             name: "historical_avg",
             elf_path: HISTORICAL_AVG_ELF_PATH,
-            computation_id: historical_avg_id,
-        });
+            computation_id: historical_avg_computation_id()?,
+        },
+    ])
+}
+
+pub fn resolve_computation(computation_id: &[u8; 32]) -> anyhow::Result<RegisteredComputation> {
+    for computation in registered_computations()? {
+        if *computation_id == computation.computation_id {
+            return Ok(computation);
+        }
     }
 
     bail!("unknown computation id")

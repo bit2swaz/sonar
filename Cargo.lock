@@ -12152,6 +12152,7 @@ dependencies = [
  "sha2 0.10.9",
  "sonar-common",
  "sp1-sdk",
+ "tempfile",
  "tokio",
  "tracing",
 ]

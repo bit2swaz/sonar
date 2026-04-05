@@ -184,7 +184,7 @@ pub fn deserialize_proof(bytes: &[u8]) -> anyhow::Result<SP1ProofWithPublicValue
     proof
 }
 
-fn configure_prover_environment() {
+pub(crate) fn configure_prover_environment() {
     if std::env::var("SP1_PROVER").is_ok() {
         return;
     }

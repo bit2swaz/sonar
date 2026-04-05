@@ -14,7 +14,13 @@
  */
 
 import * as anchor from "@coral-xyz/anchor";
-import { AnchorError } from "@coral-xyz/anchor";
+import {
+  AnchorError,
+  BorshAccountsCoder,
+  BorshInstructionCoder,
+  type Idl,
+} from "@coral-xyz/anchor";
+import { convertIdlToCamelCase } from "@coral-xyz/anchor/dist/cjs/idl";
 import { assert } from "chai";
 import { readFileSync } from "fs";
 import { join } from "path";
@@ -24,7 +30,14 @@ import {
   PublicKey,
   SystemProgram,
   LAMPORTS_PER_SOL,
+  Transaction,
+  TransactionInstruction,
 } from "@solana/web3.js";
+import {
+  startAnchor,
+  type BanksTransactionResultWithMeta,
+  type ProgramTestContext,
+} from "solana-bankrun";
 
 // ---------------------------------------------------------------------------
 // Groth16 fixture — from groth16-solana v0.2.0 built-in demo circuit
@@ -96,6 +109,13 @@ const DEMO_VERIFYING_KEY = JSON.parse(
   )
 ) as DemoVerifyingKeyFixture;
 
+const SONAR_IDL = JSON.parse(
+  readFileSync(join(process.cwd(), "target", "idl", "sonar.json"), "utf8")
+) as Idl;
+const SONAR_CAMEL_IDL = convertIdlToCamelCase(SONAR_IDL);
+const SONAR_INSTRUCTION_CODER = new BorshInstructionCoder(SONAR_CAMEL_IDL);
+const SONAR_ACCOUNTS_CODER = new BorshAccountsCoder(SONAR_CAMEL_IDL);
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -156,6 +176,119 @@ async function expectError(fn: () => Promise<unknown>, code: string): Promise<vo
   }
 }
 
+function buildBankrunRequestInstruction(
+  payer: PublicKey,
+  requestMetadata: PublicKey,
+  resultAccount: PublicKey,
+  requestId: Buffer,
+  deadline: bigint,
+  fee: bigint
+): TransactionInstruction {
+  return new TransactionInstruction({
+    programId: SONAR_PROGRAM_ID,
+    keys: [
+      { pubkey: payer, isSigner: true, isWritable: true },
+      { pubkey: ECHO_CALLBACK_ID, isSigner: false, isWritable: false },
+      { pubkey: requestMetadata, isSigner: false, isWritable: true },
+      { pubkey: resultAccount, isSigner: false, isWritable: true },
+      { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+    ],
+    data: SONAR_INSTRUCTION_CODER.encode("request", {
+      params: {
+        requestId: Array.from(requestId),
+        computationId: Array.from(DEMO_COMPUTATION_ID),
+        inputs: Buffer.alloc(0),
+        deadline: new anchor.BN(deadline.toString()),
+        fee: new anchor.BN(fee.toString()),
+      },
+    }),
+  });
+}
+
+function buildBankrunRefundInstruction(
+  payer: PublicKey,
+  requestMetadata: PublicKey
+): TransactionInstruction {
+  return new TransactionInstruction({
+    programId: SONAR_PROGRAM_ID,
+    keys: [
+      { pubkey: requestMetadata, isSigner: false, isWritable: true },
+      { pubkey: payer, isSigner: true, isWritable: true },
+    ],
+    data: SONAR_INSTRUCTION_CODER.encode("refund", {}),
+  });
+}
+
+async function buildBankrunTransaction(
+  context: ProgramTestContext,
+  instructions: TransactionInstruction[],
+  signers: Keypair[]
+): Promise<Transaction> {
+  const latestBlockhash = await context.banksClient.getLatestBlockhash();
+  assert.isNotNull(latestBlockhash, "bankrun should provide a recent blockhash");
+
+  const [recentBlockhash] = latestBlockhash!;
+  const transaction = new Transaction({
+    feePayer: signers[0].publicKey,
+    recentBlockhash,
+  });
+  transaction.add(...instructions);
+  transaction.sign(...signers);
+  return transaction;
+}
+
+async function processBankrunTransaction(
+  context: ProgramTestContext,
+  instructions: TransactionInstruction[],
+  signers: Keypair[]
+) {
+  const transaction = await buildBankrunTransaction(context, instructions, signers);
+  const meta = await context.banksClient.processTransaction(transaction);
+  return { transaction, meta };
+}
+
+async function tryProcessBankrunTransaction(
+  context: ProgramTestContext,
+  instructions: TransactionInstruction[],
+  signers: Keypair[]
+): Promise<BanksTransactionResultWithMeta> {
+  const transaction = await buildBankrunTransaction(context, instructions, signers);
+  return context.banksClient.tryProcessTransaction(transaction);
+}
+
+function expectBankrunError(
+  result: BanksTransactionResultWithMeta,
+  code: string
+): void {
+  const diagnostics = [result.result ?? "", ...(result.meta?.logMessages ?? [])].join("\n");
+  assert.isNotNull(result.result, `Expected \"${code}\" but transaction succeeded`);
+  assert.include(
+    diagnostics,
+    code,
+    `Expected bankrun failure to contain \"${code}\", got: ${diagnostics}`
+  );
+}
+
+function hasStatusVariant(status: object, variant: string): boolean {
+  return variant in status || `${variant[0].toLowerCase()}${variant.slice(1)}` in status;
+}
+
+async function fetchBankrunRequestMetadata(
+  context: ProgramTestContext,
+  requestMetadata: PublicKey
+) {
+  const account = await context.banksClient.getAccount(requestMetadata);
+  assert.isNotNull(account, "request metadata account should exist");
+  return SONAR_ACCOUNTS_CODER.decode(
+    "requestMetadata",
+    Buffer.from(account!.data)
+  ) as {
+    status: object;
+    completedAt?: anchor.BN | null;
+    completed_at?: anchor.BN | null;
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Test suite
 // ---------------------------------------------------------------------------
@@ -175,12 +308,9 @@ describe("Sonar ZK Coprocessor — Phase 2.3 Integration Tests", () => {
     sonarProgramId = SONAR_PROGRAM_ID;
     echoCallbackId = ECHO_CALLBACK_ID;
 
-    const idl = JSON.parse(
-      readFileSync(join(process.cwd(), "target", "idl", "sonar.json"), "utf8")
-    );
     // Anchor v0.32: constructor is (idl, provider?, coder?) — program ID comes
     // from idl.address. Passing a PublicKey as the second arg was wrong.
-    program = new anchor.Program(idl, provider);
+    program = new anchor.Program(SONAR_IDL, provider);
 
     const sig = await provider.connection.requestAirdrop(
       provider.wallet.publicKey,
@@ -709,5 +839,99 @@ describe("Sonar ZK Coprocessor — Phase 2.3 Integration Tests", () => {
 
   after(() => {
     console.log("\nsonar integration checks passed");
+  });
+});
+
+describe("Sonar refund deadline boundary tests (Bankrun)", () => {
+  it("refund at the exact deadline fails with DeadlineNotReached", async () => {
+    const context = await startAnchor(process.cwd(), [], []);
+    const payer = context.payer;
+    const requestId = randomId();
+    const [requestMetadata] = requestPDA(SONAR_PROGRAM_ID, requestId);
+    const [resultAccount] = resultPDA(SONAR_PROGRAM_ID, requestId);
+    const currentClock = await context.banksClient.getClock();
+    const deadline = currentClock.slot + 5n;
+    const fee = 1_000_000n;
+
+    await processBankrunTransaction(
+      context,
+      [
+        buildBankrunRequestInstruction(
+          payer.publicKey,
+          requestMetadata,
+          resultAccount,
+          requestId,
+          deadline,
+          fee
+        ),
+      ],
+      [payer]
+    );
+
+    context.warpToSlot(deadline);
+    const warpedClock = await context.banksClient.getClock();
+    assert.strictEqual(warpedClock.slot, deadline, "clock should warp to the exact deadline");
+
+    const refundResult = await tryProcessBankrunTransaction(
+      context,
+      [buildBankrunRefundInstruction(payer.publicKey, requestMetadata)],
+      [payer]
+    );
+    expectBankrunError(refundResult, "DeadlineNotReached");
+
+    const metadata = await fetchBankrunRequestMetadata(context, requestMetadata);
+    assert.isTrue(hasStatusVariant(metadata.status, "Pending"), "status should stay Pending");
+  });
+
+  it("refund at deadline plus one succeeds, marks Refunded, and returns lamports", async () => {
+    const context = await startAnchor(process.cwd(), [], []);
+    const payer = context.payer;
+    const requestId = randomId();
+    const [requestMetadata] = requestPDA(SONAR_PROGRAM_ID, requestId);
+    const [resultAccount] = resultPDA(SONAR_PROGRAM_ID, requestId);
+    const currentClock = await context.banksClient.getClock();
+    const deadline = currentClock.slot + 5n;
+    const fee = 2_000_000n;
+
+    await processBankrunTransaction(
+      context,
+      [
+        buildBankrunRequestInstruction(
+          payer.publicKey,
+          requestMetadata,
+          resultAccount,
+          requestId,
+          deadline,
+          fee
+        ),
+      ],
+      [payer]
+    );
+
+    context.warpToSlot(deadline + 1n);
+    const warpedClock = await context.banksClient.getClock();
+    assert.strictEqual(
+      warpedClock.slot,
+      deadline + 1n,
+      "clock should warp to deadline plus one"
+    );
+
+    const balanceBeforeRefund = await context.banksClient.getBalance(payer.publicKey);
+    const refundInstruction = buildBankrunRefundInstruction(payer.publicKey, requestMetadata);
+    const refundTransaction = await buildBankrunTransaction(context, [refundInstruction], [payer]);
+    const refundFee = await context.banksClient.getFeeForMessage(refundTransaction.compileMessage());
+    assert.isNotNull(refundFee, "refund transaction fee should be available");
+
+    await context.banksClient.processTransaction(refundTransaction);
+
+    const balanceAfterRefund = await context.banksClient.getBalance(payer.publicKey);
+    assert.strictEqual(
+      balanceAfterRefund - balanceBeforeRefund,
+      fee - refundFee!,
+      "payer should receive the locked lamports back minus the refund transaction fee"
+    );
+
+    const metadata = await fetchBankrunRequestMetadata(context, requestMetadata);
+    assert.isTrue(hasStatusVariant(metadata.status, "Refunded"), "status should become Refunded");
   });
 });

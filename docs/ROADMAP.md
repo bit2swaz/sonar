@@ -2,11 +2,11 @@
 
 ## how to read this file
 
-this roadmap is the canonical transition plan from the current Sonar MVP to the production target described in [docs/PROD_TARGET.md](docs/PROD_TARGET.md).
+this roadmap is the canonical transition plan from the current Sonar MVP to the production target described in [PROD_TARGET.md](PROD_TARGET.md).
 
 it starts from the code that exists today, but phases 6 and beyond are forward-looking execution work rather than claims that those features are already implemented.
 
-for the strictly factual "what exists now" view, use [docs/SSOT.md](docs/SSOT.md).
+for the strictly factual "what exists now" view, use [SSOT.md](SSOT.md).
 
 this file is where the current repository state hands off into the next production path.
 

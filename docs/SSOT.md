@@ -12,8 +12,8 @@ this file is the factual "what exists now" document.
 
 for the forward-looking production direction and execution plan, use:
 
-- [docs/PROD_TARGET.md](docs/PROD_TARGET.md) for the architecture Sonar is moving toward
-- [docs/ROADMAP.md](docs/ROADMAP.md) for the canonical transition plan from the current MVP to that target
+- [PROD_TARGET.md](PROD_TARGET.md) for the architecture Sonar is moving toward
+- [ROADMAP.md](ROADMAP.md) for the canonical transition plan from the current MVP to that target
 
 ## repository scope
 

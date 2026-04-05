@@ -25,7 +25,7 @@ solana_version  = "3.0.13"
 package_manager = "npm"
 
 [test]
-startup_wait = 15000
+startup_wait = 60000
 
 # Pre-populate the demo verifier-registry PDA so callback tests can run
 # without hitting the transaction-size limit of register_verifier.

@@ -48,6 +48,13 @@ pub mod sonar {
         instructions::register_verifier::handler(ctx, params)
     }
 
+    pub fn update_verifier(
+        ctx: Context<UpdateVerifier>,
+        params: RegisterVerifierParams,
+    ) -> Result<()> {
+        instructions::update_verifier::handler(ctx, params)
+    }
+
     /// Submit a ZK computation request on-chain.
     pub fn request(ctx: Context<Request>, params: RequestParams) -> Result<()> {
         let current_slot = Clock::get()?.slot;
@@ -281,6 +288,27 @@ pub struct RegisterVerifier<'info> {
         bump
     )]
     pub verifier_registry: Account<'info, VerifierRegistry>,
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+#[instruction(params: RegisterVerifierParams)]
+pub struct UpdateVerifier<'info> {
+    /// Must match the authority stored in the existing registry.
+    pub authority: Signer<'info>,
+    #[account(
+        mut,
+        seeds = [b"verifier", verifier_registry.computation_id.as_ref()],
+        bump = verifier_registry.bump,
+        has_one = authority @ ErrorCode::VerifierAuthorityMismatch,
+        realloc = VerifierRegistry::space_for(params.vk_ic.len()),
+        realloc::payer = payer,
+        realloc::zero = false,
+    )]
+    pub verifier_registry: Account<'info, VerifierRegistry>,
+    /// Pays for any additional rent when the account grows.
+    #[account(mut)]
+    pub payer: Signer<'info>,
     pub system_program: Program<'info, System>,
 }
 
@@ -563,6 +591,10 @@ pub enum ErrorCode {
     UnknownComputationId,
     #[msg("Stored verifier key is invalid")]
     InvalidVerifierKey,
+    #[msg("Verifier key has too many public inputs (maximum 16)")]
+    VerifierKeyTooManyPublicInputs,
+    #[msg("Signer is not the registered authority for this verifier")]
+    VerifierAuthorityMismatch,
     #[msg("Verifier public-input length is not supported by the on-chain dispatcher")]
     UnsupportedVerifierPublicInputsLength,
     #[msg("Groth16 proof length is invalid")]

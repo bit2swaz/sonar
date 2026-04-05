@@ -401,6 +401,23 @@ fn send_transaction(
         &[authority],
         blockhash,
     );
+
+    // Solana's wire protocol imposes a hard 1 232-byte limit per packet.
+    // Detect an oversized transaction before attempting submission so the
+    // caller receives an actionable error instead of a confusing RPC failure.
+    // This commonly occurs when `register_verifier` embeds a large Groth16
+    // verifying key (especially `vk_ic`) in a single instruction.
+    const SOLANA_MAX_TRANSACTION_BYTES: usize = 1232;
+    let wire_size = bincode::serialized_size(&transaction)
+        .context("failed to estimate transaction wire size")? as usize;
+    if wire_size > SOLANA_MAX_TRANSACTION_BYTES {
+        bail!(
+            "transaction is too large to submit ({wire_size} bytes; max {SOLANA_MAX_TRANSACTION_BYTES}). \
+             This commonly happens when register_verifier embeds a large Groth16 verifying key. \
+             Consider registering via chunked writes or a more compact key representation."
+        );
+    }
+
     rpc.send_and_confirm_transaction(&transaction)
         .context("send and confirm transaction")
 }

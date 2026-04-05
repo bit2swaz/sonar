@@ -20,7 +20,6 @@ import {
   BorshInstructionCoder,
   type Idl,
 } from "@coral-xyz/anchor";
-import { convertIdlToCamelCase } from "@coral-xyz/anchor/dist/cjs/idl";
 import { assert } from "chai";
 import { createHash } from "crypto";
 import { readFileSync } from "fs";
@@ -110,12 +109,26 @@ const DEMO_VERIFYING_KEY = JSON.parse(
   )
 ) as DemoVerifyingKeyFixture;
 
+// A minimal 1-public-input verifying key (2 vk_ic entries × 64 bytes each).
+// Used for PDA-creation tests where proof verification is not exercised,
+// keeping the register_verifier instruction small enough to fit in a single
+// Solana transaction (< 1232 bytes).
+const MINIMAL_VERIFYING_KEY: DemoVerifyingKeyFixture = {
+  vkAlphaG1: Array(64).fill(1),
+  vkBetaG2: Array(128).fill(2),
+  vkGammeG2: Array(128).fill(3),
+  vkDeltaG2: Array(128).fill(4),
+  vkIc: [Array(64).fill(5), Array(64).fill(6)],
+};
+
 const SONAR_IDL = JSON.parse(
   readFileSync(join(process.cwd(), "target", "idl", "sonar.json"), "utf8")
 ) as Idl;
-const SONAR_CAMEL_IDL = convertIdlToCamelCase(SONAR_IDL);
-const SONAR_INSTRUCTION_CODER = new BorshInstructionCoder(SONAR_CAMEL_IDL);
-const SONAR_ACCOUNTS_CODER = new BorshAccountsCoder(SONAR_CAMEL_IDL);
+// BorshInstructionCoder and BorshAccountsCoder convert the IDL to camelCase
+// internally, so passing the raw IDL from disk is correct and avoids depending
+// on the private `convertIdlToCamelCase` export.
+const SONAR_INSTRUCTION_CODER = new BorshInstructionCoder(SONAR_IDL);
+const SONAR_ACCOUNTS_CODER = new BorshAccountsCoder(SONAR_IDL);
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -334,7 +347,6 @@ describe("Sonar ZK Coprocessor — Phase 2.3 Integration Tests", () => {
   let echoCallbackId: PublicKey;
   let provider: anchor.AnchorProvider;
   let demoVerifierRegistry: PublicKey;
-  let verifierRegistrationUnsupportedReason: string | null = null;
 
   before(async () => {
     provider = anchor.AnchorProvider.env();
@@ -356,26 +368,8 @@ describe("Sonar ZK Coprocessor — Phase 2.3 Integration Tests", () => {
     [demoVerifierRegistry] = verifierPDA(sonarProgramId, DEMO_COMPUTATION_ID);
   });
 
-  async function ensureDemoVerifierRegisteredOrSkip(testContext: Mocha.Context): Promise<void> {
-    if (verifierRegistrationUnsupportedReason !== null) {
-      console.warn(`Skipping verifier-dependent spec: ${verifierRegistrationUnsupportedReason}`);
-      testContext.skip();
-      return;
-    }
-
-    try {
-      await ensureVerifierRegistered(demoVerifierRegistry, DEMO_COMPUTATION_ID);
-    } catch (err: unknown) {
-      const message = String(err);
-      if (message.includes("Transaction too large")) {
-        verifierRegistrationUnsupportedReason =
-          "registerVerifier exceeds the localnet transaction size limit";
-        console.warn(`Skipping verifier-dependent spec: ${verifierRegistrationUnsupportedReason}`);
-        testContext.skip();
-        return;
-      }
-      throw err;
-    }
+  async function ensureDemoVerifierRegisteredOrSkip(_testContext: Mocha.Context): Promise<void> {
+    await ensureVerifierRegistered(demoVerifierRegistry, DEMO_COMPUTATION_ID);
   }
 
   async function ensureVerifierRegistered(
@@ -411,35 +405,13 @@ describe("Sonar ZK Coprocessor — Phase 2.3 Integration Tests", () => {
     it("registerVerifier creates and populates verifier registry PDA", async function () {
       const computationId = Buffer.from(Keypair.generate().publicKey.toBytes());
       const [verifierRegistry] = verifierPDA(sonarProgramId, computationId);
-      const customVerifyingKey: DemoVerifyingKeyFixture = {
-        vkAlphaG1: DEMO_VERIFYING_KEY.vkAlphaG1.map((value, index) => (value + index) % 256),
-        vkBetaG2: DEMO_VERIFYING_KEY.vkBetaG2.map((value, index) => (value + index) % 256),
-        vkGammeG2: DEMO_VERIFYING_KEY.vkGammeG2.map((value, index) => (value + index) % 256),
-        vkDeltaG2: DEMO_VERIFYING_KEY.vkDeltaG2.map((value, index) => (value + index) % 256),
-        vkIc: DEMO_VERIFYING_KEY.vkIc.map((row, rowIndex) =>
-          row.map((value, columnIndex) => (value + rowIndex + columnIndex) % 256)
-        ),
-      };
+      // Use the minimal 2-entry fixture so the instruction data stays below the
+      // 1232-byte Solana transaction limit.  This test only exercises PDA
+      // creation and field storage; proof-verification coverage is provided by
+      // the Callback Flow suite using the pre-populated demo registry.
+      const minimalKey = MINIMAL_VERIFYING_KEY;
 
-      if (verifierRegistrationUnsupportedReason !== null) {
-        console.warn(`Skipping verifier-dependent spec: ${verifierRegistrationUnsupportedReason}`);
-        this.skip();
-        return;
-      }
-
-      try {
-        await ensureVerifierRegistered(verifierRegistry, computationId, customVerifyingKey);
-      } catch (err: unknown) {
-        const message = String(err);
-        if (message.includes("Transaction too large")) {
-          verifierRegistrationUnsupportedReason =
-            "registerVerifier exceeds the localnet transaction size limit";
-          console.warn(`Skipping verifier-dependent spec: ${verifierRegistrationUnsupportedReason}`);
-          this.skip();
-          return;
-        }
-        throw err;
-      }
+      await ensureVerifierRegistered(verifierRegistry, computationId, minimalKey);
 
       const registry = await program.account.verifierRegistry.fetch(verifierRegistry);
       assert.deepEqual(
@@ -453,27 +425,27 @@ describe("Sonar ZK Coprocessor — Phase 2.3 Integration Tests", () => {
       );
       assert.deepEqual(
         Array.from(registry.vkAlphaG1 as number[]),
-        customVerifyingKey.vkAlphaG1,
+        minimalKey.vkAlphaG1,
         "vk_alpha_g1"
       );
       assert.deepEqual(
         Array.from(registry.vkBetaG2 as number[]),
-        customVerifyingKey.vkBetaG2,
+        minimalKey.vkBetaG2,
         "vk_beta_g2"
       );
       assert.deepEqual(
         Array.from(registry.vkGammeG2 as number[]),
-        customVerifyingKey.vkGammeG2,
+        minimalKey.vkGammeG2,
         "vk_gamme_g2"
       );
       assert.deepEqual(
         Array.from(registry.vkDeltaG2 as number[]),
-        customVerifyingKey.vkDeltaG2,
+        minimalKey.vkDeltaG2,
         "vk_delta_g2"
       );
       assert.deepEqual(
         (registry.vkIc as number[][]).map((row) => Array.from(row)),
-        customVerifyingKey.vkIc,
+        minimalKey.vkIc,
         "vk_ic"
       );
 
@@ -481,7 +453,7 @@ describe("Sonar ZK Coprocessor — Phase 2.3 Integration Tests", () => {
       assert.isNotNull(accountInfo, "verifier registry account must exist");
       assert.strictEqual(
         accountInfo!.data.length,
-        verifierRegistryAccountSize(customVerifyingKey.vkIc.length),
+        verifierRegistryAccountSize(minimalKey.vkIc.length),
         "account size"
       );
     });

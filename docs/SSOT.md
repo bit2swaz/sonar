@@ -6,6 +6,15 @@ this file is the single source of truth for what the `sonar` repository actually
 
 it is intentionally narrower than a vision document. every statement below is based on checked-in code, config, tests, or ci workflows in this repository.
 
+## how this fits with the newer planning docs
+
+this file is the factual "what exists now" document.
+
+for the forward-looking production direction and execution plan, use:
+
+- [docs/PROD_TARGET.md](docs/PROD_TARGET.md) for the architecture Sonar is moving toward
+- [docs/ROADMAP.md](docs/ROADMAP.md) for the canonical transition plan from the current MVP to that target
+
 ## repository scope
 
 the repository contains:

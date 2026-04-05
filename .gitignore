@@ -48,6 +48,7 @@ node_modules/
 *.swo
 *~
 Thumbs.db
+temp
 
 # benchmarks / criterion output 
 criterion/

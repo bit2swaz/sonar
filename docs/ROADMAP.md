@@ -2,13 +2,27 @@
 
 ## how to read this file
 
-this roadmap tracks implementation status against the code that is actually present in the repository.
+this roadmap is the canonical transition plan from the current Sonar MVP to the production target described in [docs/PROD_TARGET.md](docs/PROD_TARGET.md).
+
+it starts from the code that exists today, but phases 6 and beyond are forward-looking execution work rather than claims that those features are already implemented.
+
+for the strictly factual "what exists now" view, use [docs/SSOT.md](docs/SSOT.md).
+
+this file is where the current repository state hands off into the next production path.
 
 status values:
 
 - `[x]` complete in code and covered by existing tests or ci checks
 - `[-]` partially implemented or scaffolded, but missing one or more parts of the original goal
 - `[ ]` not implemented yet
+
+## document role
+
+phases 0 through 5 describe the completed MVP foundation already present in the repository.
+
+phase 6 captures the active production-verifier pivot now that the local historical-average flow exists.
+
+phases 7 and beyond define the canonical next execution path for turning the MVP into a production-grade coprocessor stack.
 
 ## phase summary
 
@@ -131,23 +145,51 @@ missing pieces that keep 6.1 from complete:
 - the on-chain historical-average path still relies on an MVP verifier helper rather than a fully separate production verifier rollout
 - the historical-average path is covered locally, but not yet presented as a hardened production-ready verification path
 
+next execution path for phase 6:
+
+- `[ ]` 6.2 extract proving artifacts and computation metadata in a repeatable way
+- `[ ]` 6.3 add an on-chain verifier-registry path or equivalent production-grade verifier mapping keyed by `computation_id`
+- `[ ]` 6.4 harden coordinator callback proof formatting for the production verifier flow
+- `[ ]` 6.5 replace the MVP helper with real on-chain cryptographic verification for historical-average callbacks
+- `[ ]` 6.6 add explicit negative tests for mutated proofs and mutated public inputs
+
 ### phase 7 - testing and hardening
 
 - `[ ]` 7.1 property tests for zk and math
 - `[ ]` 7.2 chaos and fork testing
+- `[ ]` 7.3 refund and deadline edge-case hardening
 
 current state:
 
 - `tests/property.rs` exists as a placeholder only
 - `tests/integration.rs` exists as a placeholder only
 
+target outcome for this phase:
+
+- prover and guest logic handle malformed and extreme inputs safely
+- queue workers fail gracefully on corrupted payloads
+- refund timing rules are test-covered at exact slot boundaries
+
 ### phase 8 - performance optimisation
 
 - `[ ]` 8.1 benchmarking and optimisation
+- `[ ]` 8.2 indexing and callback-path performance improvements
+
+target outcome for this phase:
+
+- better historical lookup performance
+- better callback inclusion under realistic network conditions
+- measurement-driven tuning rather than ad hoc changes
 
 ### phase 9 - developer experience
 
 - `[ ]` 9.1 full sdk, cli, and developer tooling
+
+target outcome for this phase:
+
+- a clearer Rust SDK story for request/callback integration
+- better automation for build artifacts and verifier-registration workflows
+- lower-friction developer onboarding from guest program to deployed verifier path
 
 current state:
 
@@ -158,6 +200,12 @@ current state:
 ### phase 10 - testnet and mainnet readiness
 
 - `[ ]` 10.1 deployment hardening and network rollout
+
+target outcome for this phase:
+
+- config parity across environments
+- deployable infrastructure definitions for off-chain services
+- a cleaner path from local MVP validation to persistent hosted environments
 
 ### phase 11 - token and staking
 
@@ -182,6 +230,16 @@ the highest-value next steps visible from the codebase are:
 3. replace `tests/property.rs` and `tests/integration.rs` placeholders with real phase 7 coverage
 4. expand production-facing docs and deployment guidance around the new e2e/demo coverage
 5. continue reducing config and env-var legacy surface area
+
+## production-path checkpoints
+
+the next canonical transition from the current MVP into the production target is:
+
+1. finish the production historical-average verifier path on-chain
+2. harden proof formatting and callback security checks
+3. add the missing hardening test layers
+4. sync the config and deployment model with the real runtime shape
+5. improve SDK and tooling ergonomics around the proving flow
 
 ## tested status snapshot
 

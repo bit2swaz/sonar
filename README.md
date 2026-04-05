@@ -59,7 +59,13 @@ flowchart LR
 - `crates/prover/` - computation registry, SP1 wrappers, and Redis worker
 - `bin/` - executable entry points for indexer, coordinator, and prover
 - `programs/` - SP1 guest programs and committed ELF files
-- `docs/` - architecture, roadmap, ssot, and contribution docs
+- `docs/` - current-state docs, production-target docs, roadmap, and contribution docs
+
+important docs:
+
+- [docs/SSOT.md](docs/SSOT.md) - factual current implementation status
+- [docs/PROD_TARGET.md](docs/PROD_TARGET.md) - forward-looking production architecture target
+- [docs/ROADMAP.md](docs/ROADMAP.md) - canonical transition plan from current MVP to the production target
 
 ## key features
 

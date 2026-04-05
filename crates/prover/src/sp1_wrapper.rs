@@ -165,7 +165,9 @@ pub fn compute_historical_avg_result(balances: &[u64]) -> u64 {
         return 0;
     }
 
-    let sum: u64 = balances.iter().fold(0u64, |acc, &x| acc.saturating_add(x));
+    let sum: u64 = balances.iter().fold(0u64, |accumulator, &value| {
+        accumulator.saturating_add(value)
+    });
     sum / balances.len() as u64
 }
 

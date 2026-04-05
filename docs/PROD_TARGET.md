@@ -4,14 +4,14 @@
 
 this document describes the production architecture Sonar is moving toward after the current MVP baseline.
 
-it is intentionally forward-looking. unlike [docs/SSOT.md](docs/SSOT.md), it is not limited to code already implemented in this repository.
+it is intentionally forward-looking. unlike [SSOT.md](SSOT.md), it is not limited to code already implemented in this repository.
 
 this file translates that direction into a stable repository doc that contributors can use without confusing future targets with current implementation facts.
 
 ## how to read the docs set
 
-- [docs/SSOT.md](docs/SSOT.md) = what is implemented today
-- [docs/ROADMAP.md](docs/ROADMAP.md) = canonical execution plan from the current MVP to the production target
+- [SSOT.md](SSOT.md) = what is implemented today
+- [ROADMAP.md](ROADMAP.md) = canonical execution plan from the current MVP to the production target
 - this file = the architecture and product shape Sonar is aiming to reach
 
 ## current baseline inherited from the MVP
@@ -104,7 +104,7 @@ this document does not mean the following are already live in the repository tod
 - staking, slashing, or token economics in code
 - a decentralized prover network
 
-those items remain future work until they are reflected in [docs/SSOT.md](docs/SSOT.md).
+those items remain future work until they are reflected in [SSOT.md](SSOT.md).
 
 ## near-term transition checkpoints
 

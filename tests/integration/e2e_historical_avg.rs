@@ -503,7 +503,10 @@ fn echo_callback_program_id() -> Pubkey {
 }
 
 fn historical_avg_verifier_registry_pda() -> (Pubkey, u8) {
-    Pubkey::find_program_address(&[b"verifier", &HISTORICAL_AVG_COMPUTATION_ID], &sonar_program::id())
+    Pubkey::find_program_address(
+        &[b"verifier", &HISTORICAL_AVG_COMPUTATION_ID],
+        &sonar_program::id(),
+    )
 }
 
 fn start_indexer(paths: &TestPaths) -> Result<ChildGuard> {

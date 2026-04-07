@@ -161,8 +161,8 @@ mod tests {
 
         let balances = vec![200_u64, 280_u64, 150_u64, 480_u64];
         let encoded = bincode::serialize(&balances).expect("serialize balances");
-        let elf = build_sp1_program(HISTORICAL_AVG_ELF_PATH)
-            .expect("historical_avg ELF should load");
+        let elf =
+            build_sp1_program(HISTORICAL_AVG_ELF_PATH).expect("historical_avg ELF should load");
         let (result, proof, public_inputs) =
             run_historical_avg_program(&elf, &encoded).expect("mock proving should succeed");
 
@@ -171,7 +171,10 @@ mod tests {
             .to_vec();
         assert_eq!(result, expected);
         assert_eq!(public_inputs, expected);
-        assert!(load_proof_bundle(&proof).is_ok(), "historical_avg mock proof should be a serialized SP1 proof bundle");
+        assert!(
+            load_proof_bundle(&proof).is_ok(),
+            "historical_avg mock proof should be a serialized SP1 proof bundle"
+        );
 
         if let Some(value) = previous {
             std::env::set_var("SP1_PROVER", value);
@@ -200,7 +203,10 @@ mod tests {
             .to_vec();
         assert_eq!(result, expected);
         assert_eq!(public_inputs, expected);
-        assert!(!proof.is_empty(), "mock historical_avg prove should produce a proof payload");
+        assert!(
+            !proof.is_empty(),
+            "mock historical_avg prove should produce a proof payload"
+        );
 
         if let Some(value) = previous {
             std::env::set_var("SP1_PROVER", value);

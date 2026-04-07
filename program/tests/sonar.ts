@@ -129,6 +129,9 @@ const SONAR_IDL = JSON.parse(
 // on the private `convertIdlToCamelCase` export.
 const SONAR_INSTRUCTION_CODER = new BorshInstructionCoder(SONAR_IDL);
 const SONAR_ACCOUNTS_CODER = new BorshAccountsCoder(SONAR_IDL);
+const REQUEST_DISCRIMINATOR = Buffer.from(
+  SONAR_IDL.instructions.find((instruction) => instruction.name === "request")!.discriminator
+);
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -231,6 +234,14 @@ function buildBankrunRequestInstruction(
   deadline: bigint,
   fee: bigint
 ): TransactionInstruction {
+  const inputs = Buffer.alloc(0);
+  const inputsLength = Buffer.alloc(4);
+  inputsLength.writeUInt32LE(inputs.length, 0);
+  const deadlineBytes = Buffer.alloc(8);
+  deadlineBytes.writeBigUInt64LE(deadline, 0);
+  const feeBytes = Buffer.alloc(8);
+  feeBytes.writeBigUInt64LE(fee, 0);
+
   return new TransactionInstruction({
     programId: SONAR_PROGRAM_ID,
     keys: [
@@ -240,15 +251,15 @@ function buildBankrunRequestInstruction(
       { pubkey: resultAccount, isSigner: false, isWritable: true },
       { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
     ],
-    data: SONAR_INSTRUCTION_CODER.encode("request", {
-      params: {
-        requestId: Array.from(requestId),
-        computationId: Array.from(DEMO_COMPUTATION_ID),
-        inputs: Buffer.alloc(0),
-        deadline: new anchor.BN(deadline.toString()),
-        fee: new anchor.BN(fee.toString()),
-      },
-    }),
+    data: Buffer.concat([
+      REQUEST_DISCRIMINATOR,
+      requestId,
+      DEMO_COMPUTATION_ID,
+      inputsLength,
+      inputs,
+      deadlineBytes,
+      feeBytes,
+    ]),
   });
 }
 
@@ -327,7 +338,7 @@ async function fetchBankrunRequestMetadata(
   const account = await context.banksClient.getAccount(requestMetadata);
   assert.isNotNull(account, "request metadata account should exist");
   return SONAR_ACCOUNTS_CODER.decode(
-    "requestMetadata",
+    "RequestMetadata",
     Buffer.from(account!.data)
   ) as {
     status: object;
@@ -449,7 +460,11 @@ describe("Sonar ZK Coprocessor — Phase 2.3 Integration Tests", () => {
         "vk_ic"
       );
 
-      const accountInfo = await provider.connection.getAccountInfo(verifierRegistry, "confirmed");
+      let accountInfo = await provider.connection.getAccountInfo(verifierRegistry, "confirmed");
+      for (let attempt = 0; accountInfo === null && attempt < 10; attempt += 1) {
+        await sleep(200);
+        accountInfo = await provider.connection.getAccountInfo(verifierRegistry, "confirmed");
+      }
       assert.isNotNull(accountInfo, "verifier registry account must exist");
       assert.strictEqual(
         accountInfo!.data.length,

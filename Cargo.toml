@@ -97,6 +97,7 @@ overflow-checks = true
 
 [dev-dependencies]
 anchor-lang = { workspace = true }
+base64 = "0.22"
 bincode = { workspace = true }
 bs58 = { workspace = true }
 reqwest = { workspace = true }

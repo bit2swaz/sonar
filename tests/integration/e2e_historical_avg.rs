@@ -9,8 +9,9 @@ use std::{
     time::{Duration, Instant},
 };
 
-use anchor_lang::{AccountDeserialize, InstructionData, ToAccountMetas};
+use anchor_lang::{AccountDeserialize, AccountSerialize, InstructionData, ToAccountMetas};
 use anyhow::{anyhow, bail, Context, Result};
+use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use reqwest::StatusCode;
 use solana_client::rpc_client::RpcClient;
 use solana_sdk::{
@@ -136,6 +137,7 @@ async fn end_to_end_historical_average_flow_works() -> Result<()> {
     let ports = PortLayout::allocate()?;
     write_plugin_config(&paths, &postgres_url)?;
     write_runtime_config(&paths, &postgres_url, &redis_url, &ports)?;
+    write_historical_avg_verifier_registry_fixture(&paths)?;
 
     let mut validator = start_validator(&paths, &ports)?;
     wait_for_validator(
@@ -229,6 +231,7 @@ struct TestPaths {
     repo_root: PathBuf,
     log_dir: PathBuf,
     ledger_dir: PathBuf,
+    historical_avg_verifier_registry_fixture: PathBuf,
     plugin_config: PathBuf,
     runtime_config: PathBuf,
     coordinator_keypair: PathBuf,
@@ -245,6 +248,8 @@ impl TestPaths {
             repo_root: repo_root.to_path_buf(),
             log_dir,
             ledger_dir,
+            historical_avg_verifier_registry_fixture: workspace_dir
+                .join("historical-avg-verifier-registry.json"),
             plugin_config: workspace_dir.join("geyser-plugin.json"),
             runtime_config: workspace_dir.join("sonar-e2e.toml"),
             coordinator_keypair: workspace_dir.join("coordinator-keypair.json"),
@@ -410,8 +415,54 @@ metrics_port = 9090
     fs::write(&paths.runtime_config, config).context("write runtime config")
 }
 
+fn write_historical_avg_verifier_registry_fixture(paths: &TestPaths) -> Result<()> {
+    let (verifier_registry, bump) = historical_avg_verifier_registry_pda();
+    let demo_fixture_path = paths
+        .repo_root
+        .join("program/tests/fixtures/demo_verifier_registry.json");
+    let demo_fixture = fs::read_to_string(&demo_fixture_path)
+        .with_context(|| format!("read {}", demo_fixture_path.display()))?;
+    let demo_json: serde_json::Value =
+        serde_json::from_str(&demo_fixture).context("parse demo verifier fixture json")?;
+    let demo_data = demo_json["account"]["data"][0]
+        .as_str()
+        .context("read demo verifier fixture data")?;
+    let decoded = BASE64_STANDARD
+        .decode(demo_data)
+        .context("decode demo verifier fixture base64")?;
+    let mut slice = decoded.as_slice();
+    let mut account = sonar_program::VerifierRegistry::try_deserialize(&mut slice)
+        .context("deserialize demo verifier registry fixture")?;
+    account.computation_id = HISTORICAL_AVG_COMPUTATION_ID;
+    account.bump = bump;
+
+    let mut data = Vec::new();
+    account
+        .try_serialize(&mut data)
+        .context("serialize historical verifier registry")?;
+
+    let fixture = serde_json::json!({
+        "pubkey": verifier_registry.to_string(),
+        "account": {
+            "lamports": 10_000_000u64,
+            "data": [BASE64_STANDARD.encode(&data), "base64"],
+            "owner": sonar_program::id().to_string(),
+            "executable": false,
+            "rentEpoch": u64::MAX,
+            "space": data.len(),
+        }
+    });
+
+    fs::write(
+        &paths.historical_avg_verifier_registry_fixture,
+        serde_json::to_vec_pretty(&fixture).context("encode verifier registry fixture json")?,
+    )
+    .context("write historical verifier registry fixture")
+}
+
 fn start_validator(paths: &TestPaths, ports: &PortLayout) -> Result<ChildGuard> {
     let log = File::create(paths.log_path("validator")).context("create validator log")?;
+    let (historical_avg_verifier_registry, _) = historical_avg_verifier_registry_pda();
     let mut command = Command::new("solana-test-validator");
     command
         .current_dir(&paths.repo_root)
@@ -432,6 +483,9 @@ fn start_validator(paths: &TestPaths, ports: &PortLayout) -> Result<ChildGuard> 
         .arg(&paths.ledger_dir)
         .arg("--geyser-plugin-config")
         .arg(&paths.plugin_config)
+        .arg("--account")
+        .arg(historical_avg_verifier_registry.to_string())
+        .arg(&paths.historical_avg_verifier_registry_fixture)
         .arg("--bpf-program")
         .arg(sonar_program::id().to_string())
         .arg(paths.sonar_program_so())
@@ -446,6 +500,10 @@ fn start_validator(paths: &TestPaths, ports: &PortLayout) -> Result<ChildGuard> 
 fn echo_callback_program_id() -> Pubkey {
     Pubkey::from_str("3RBU9G6Mws9nS8bQPg2cVRbS2v7CgsjAvv2MwmTcmbyA")
         .expect("valid echo callback program id")
+}
+
+fn historical_avg_verifier_registry_pda() -> (Pubkey, u8) {
+    Pubkey::find_program_address(&[b"verifier", &HISTORICAL_AVG_COMPUTATION_ID], &sonar_program::id())
 }
 
 fn start_indexer(paths: &TestPaths) -> Result<ChildGuard> {

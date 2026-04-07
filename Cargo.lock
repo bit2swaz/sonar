@@ -12327,6 +12327,7 @@ version = "0.1.0"
 dependencies = [
  "anchor-lang",
  "anyhow",
+ "base64 0.22.1",
  "bincode",
  "bs58",
  "historical-avg-client",

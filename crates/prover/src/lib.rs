@@ -44,14 +44,6 @@ pub fn prove(
         sp1_wrapper::run_sp1_program(&elf, inputs)?
     };
 
-    if computation.elf_path == HISTORICAL_AVG_ELF_PATH
-        && std::env::var("SP1_PROVER")
-            .map(|value| value.eq_ignore_ascii_case("mock"))
-            .unwrap_or(false)
-    {
-        return Ok((stark_proof, result, public_inputs));
-    }
-
     let proof = wrap_stark_to_groth16(&stark_proof, std::slice::from_ref(&public_inputs))?;
     Ok((proof, result, public_inputs))
 }
@@ -63,8 +55,8 @@ mod tests {
     use super::*;
     use crate::{
         groth16_wrapper::wrap_stark_to_groth16,
-        registry::FIBONACCI_ELF_PATH,
-        sp1_wrapper::{mock_historical_avg_proof, run_historical_avg_program, run_sp1_program},
+        registry::{FIBONACCI_ELF_PATH, HISTORICAL_AVG_ELF_PATH},
+        sp1_wrapper::{load_proof_bundle, run_historical_avg_program, run_sp1_program},
     };
 
     static SP1_FIXTURE: OnceLock<(Vec<u8>, Vec<u8>, Vec<u8>)> = OnceLock::new();
@@ -160,7 +152,7 @@ mod tests {
     }
 
     #[test]
-    fn test_historical_avg_mock_prover_short_circuits_heavy_proving() {
+    fn test_historical_avg_mock_prover_returns_wrappable_bundle() {
         let _guard = SP1_ENV_LOCK
             .lock()
             .expect("SP1 env lock should not be poisoned");
@@ -169,15 +161,17 @@ mod tests {
 
         let balances = vec![200_u64, 280_u64, 150_u64, 480_u64];
         let encoded = bincode::serialize(&balances).expect("serialize balances");
+        let elf = build_sp1_program(HISTORICAL_AVG_ELF_PATH)
+            .expect("historical_avg ELF should load");
         let (result, proof, public_inputs) =
-            run_historical_avg_program(&[0_u8; 4], &encoded).expect("mock proving should succeed");
+            run_historical_avg_program(&elf, &encoded).expect("mock proving should succeed");
 
         let expected = sp1_wrapper::compute_historical_avg_result(&balances)
             .to_le_bytes()
             .to_vec();
         assert_eq!(result, expected);
         assert_eq!(public_inputs, expected);
-        assert_eq!(proof, mock_historical_avg_proof(&expected));
+        assert!(load_proof_bundle(&proof).is_ok(), "historical_avg mock proof should be a serialized SP1 proof bundle");
 
         if let Some(value) = previous {
             std::env::set_var("SP1_PROVER", value);
@@ -187,7 +181,7 @@ mod tests {
     }
 
     #[test]
-    fn test_prove_historical_avg_mock_skips_groth16_wrap() {
+    fn test_prove_historical_avg_mock_returns_non_empty_proof() {
         let _guard = SP1_ENV_LOCK
             .lock()
             .expect("SP1 env lock should not be poisoned");
@@ -206,7 +200,7 @@ mod tests {
             .to_vec();
         assert_eq!(result, expected);
         assert_eq!(public_inputs, expected);
-        assert_eq!(proof, mock_historical_avg_proof(&expected));
+        assert!(!proof.is_empty(), "mock historical_avg prove should produce a proof payload");
 
         if let Some(value) = previous {
             std::env::set_var("SP1_PROVER", value);

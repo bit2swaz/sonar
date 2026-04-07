@@ -27,6 +27,9 @@ package_manager = "npm"
 [test]
 startup_wait = 60000
 
+[test.validator]
+bind_address = "127.0.0.1"
+
 # Pre-populate the demo verifier-registry PDA so callback tests can run
 # without hitting the transaction-size limit of register_verifier.
 [[test.validator.account]]

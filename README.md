@@ -85,6 +85,47 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace -- --skip integration
 ```
 
+### Local GitHub Actions CI
+
+Install `act` to run the GitHub Actions workflows locally before pushing:
+
+```bash
+brew install act
+```
+
+Or via the upstream install script:
+
+```bash
+curl https://raw.githubusercontent.com/nektos/act/master/install.sh | sudo bash
+```
+
+The repo includes `.actrc` with the default `ubuntu-latest` image mapping used by `act`.
+
+Before your first local run:
+
+```bash
+cp .secrets.example .secrets
+```
+
+If you want to run workflows that require GitHub-authenticated actions or API
+access, replace the dummy `GITHUB_TOKEN` in `.secrets` with a real token first.
+
+Then execute the local CI wrapper:
+
+```bash
+scripts/local-ci.sh
+```
+
+The script checks that Docker is installed and running, then invokes `act`
+with `.secrets`, cached action content, and cached runner images when possible.
+You can pass any normal `act` arguments through the wrapper, for example:
+
+```bash
+scripts/local-ci.sh -l
+scripts/local-ci.sh pull_request
+scripts/local-ci.sh -W .github/workflows/ci.yml -j check
+```
+
 ### Benchmarks
 
 ```bash

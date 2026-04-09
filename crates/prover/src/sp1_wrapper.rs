@@ -87,6 +87,23 @@ pub fn run_historical_avg_program(
     configure_prover_environment();
     let mock_prover = using_mock_prover();
 
+    if mock_prover && elf.is_empty() {
+        let result_bytes = compute_historical_avg_result(&balances)
+            .to_le_bytes()
+            .to_vec();
+        let bundle = Sp1ProofBundle {
+            public_values: result_bytes.clone(),
+            stark_proof: result_bytes.clone(),
+            groth16_proof: result_bytes.clone(),
+        };
+
+        return Ok((
+            result_bytes.clone(),
+            bincode::serialize(&bundle)?,
+            result_bytes,
+        ));
+    }
+
     let prover = ProverClient::from_env();
     let elf_obj = Elf::from(elf.to_vec());
     let pk = prover

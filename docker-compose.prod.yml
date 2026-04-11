@@ -89,5 +89,33 @@ services:
     volumes:
       - ./artifacts:/opt/sonar/artifacts:ro
 
+  prometheus:
+    image: prom/prometheus:v2.55.0
+    restart: unless-stopped
+    depends_on:
+      coordinator:
+        condition: service_started
+      prover:
+        condition: service_started
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+    volumes:
+      - ./docker/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+
+  grafana:
+    image: grafana/grafana:11.3.0
+    restart: unless-stopped
+    depends_on:
+      prometheus:
+        condition: service_started
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+    ports:
+      - "${GRAFANA_PORT:-3000}:3000"
+    volumes:
+      - grafana-data:/var/lib/grafana
+
 volumes:
   postgres-data:
+  grafana-data:

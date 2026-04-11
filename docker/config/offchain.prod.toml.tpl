@@ -1,0 +1,34 @@
+[network]
+rpc_url  = "${SOLANA_RPC_URL}"
+ws_url   = "${SOLANA_WS_URL}"
+chain_id = "${SONAR_CHAIN_ID}"
+
+[strategy]
+min_profit_floor_usd  = 0.10
+gas_buffer_multiplier = 1.2
+max_gas_price_gwei    = 2.0
+
+[rpc]
+helius_api_key = "${HELIUS_API_KEY}"
+helius_rpc_url = "${HELIUS_RPC_URL}"
+
+[indexer]
+geyser_plugin_path = "/opt/sonar/libsonar_indexer.so"
+database_url       = "${DATABASE_URL}"
+concurrency        = 4
+http_port          = 8080
+
+[coordinator]
+redis_url                = "${REDIS_URL}"
+callback_timeout_seconds = 30
+max_concurrent_jobs      = 8
+indexer_url              = "${INDEXER_URL}"
+
+[prover]
+sp1_proving_key_path = "${SP1_PROVING_KEY}"
+groth16_params_path  = "${GROTH16_PARAMS}"
+mock_prover          = __MOCK_PROVER__
+
+[observability]
+log_level    = "${LOG_LEVEL}"
+metrics_port = __METRICS_PORT__

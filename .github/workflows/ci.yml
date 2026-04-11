@@ -23,7 +23,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Prepare temp workspace
-        run: mkdir -p "$TMPDIR"
+        run: mkdir -p "${TMPDIR:-/tmp}"
 
       - name: Setup Node.js
         uses: actions/setup-node@v4

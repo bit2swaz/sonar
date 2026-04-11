@@ -99,7 +99,9 @@ Or via the upstream install script:
 curl https://raw.githubusercontent.com/nektos/act/master/install.sh | sudo bash
 ```
 
-The repo includes `.actrc` with the default `ubuntu-latest` image mapping used by `act`.
+The repo includes `.actrc` with a `ubuntu-latest` mapping to the fuller
+`catthehacker/ubuntu:full-latest` runner image so local `act` runs match the
+GitHub-hosted environment more closely and avoid re-downloading core toolchains.
 
 Before your first local run:
 

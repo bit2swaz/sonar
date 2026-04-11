@@ -11,6 +11,9 @@ PLUGIN_CONFIG_JSON="${DEMO_DIR}/geyser-plugin.json"
 COORDINATOR_KEYPAIR="${DEMO_DIR}/coordinator-keypair.json"
 CLIENT_KEYPAIR="${DEMO_DIR}/client-keypair.json"
 OBSERVED_KEYPAIR="${DEMO_DIR}/observed-keypair.json"
+HISTORICAL_AVG_VERIFIER_FIXTURE="${DEMO_DIR}/historical-avg-verifier-registry.json"
+HISTORICAL_AVG_VERIFIER_PUBKEY_FILE="${DEMO_DIR}/historical-avg-verifier-registry.pubkey"
+DEMO_VERIFIER_FIXTURE_TEMPLATE="${ROOT_DIR}/program/tests/fixtures/demo_verifier_registry.json"
 
 SONAR_PROGRAM_ID="EE2sQ2VRa1hY3qjPQ1PEwuPZX6dGwTZwHMCumWrGn3sV"
 ECHO_CALLBACK_PROGRAM_ID="3RBU9G6Mws9nS8bQPg2cVRbS2v7CgsjAvv2MwmTcmbyA"
@@ -155,6 +158,45 @@ mock_prover = true
 log_level = "info"
 metrics_port = 9090
 EOF
+}
+
+write_historical_avg_verifier_fixture() {
+	export DEMO_HISTORICAL_AVG_VERIFIER_FIXTURE="${HISTORICAL_AVG_VERIFIER_FIXTURE}"
+	export DEMO_HISTORICAL_AVG_VERIFIER_PUBKEY_FILE="${HISTORICAL_AVG_VERIFIER_PUBKEY_FILE}"
+	export DEMO_VERIFIER_FIXTURE_TEMPLATE
+	export DEMO_SONAR_PROGRAM_ID="${SONAR_PROGRAM_ID}"
+	node <<'NODE'
+const fs = require('fs');
+const anchor = require('@coral-xyz/anchor');
+const { PublicKey } = anchor.web3;
+
+const template = JSON.parse(fs.readFileSync(process.env.DEMO_VERIFIER_FIXTURE_TEMPLATE, 'utf8'));
+const computationId = Buffer.from([
+	180, 134, 237, 198, 23, 219, 85, 143, 84, 245, 61, 62, 222, 122, 82, 179, 3, 201, 204, 111,
+	144, 62, 32, 159, 91, 227, 160, 78, 252, 195, 98, 100,
+]);
+const sonarProgramId = new PublicKey(process.env.DEMO_SONAR_PROGRAM_ID);
+const [verifierRegistry, bump] = PublicKey.findProgramAddressSync(
+	[Buffer.from('verifier'), computationId],
+	sonarProgramId,
+);
+
+const data = Buffer.from(template.account.data[0], 'base64');
+computationId.copy(data, 8);
+data[data.length - 1] = bump;
+
+const fixture = {
+	pubkey: verifierRegistry.toBase58(),
+	account: {
+		...template.account,
+			rentEpoch: 0,
+		data: [data.toString('base64'), 'base64'],
+	},
+};
+
+fs.writeFileSync(process.env.DEMO_HISTORICAL_AVG_VERIFIER_FIXTURE, `${JSON.stringify(fixture, null, 2)}\n`);
+	fs.writeFileSync(process.env.DEMO_HISTORICAL_AVG_VERIFIER_PUBKEY_FILE, `${verifierRegistry.toBase58()}\n`);
+NODE
 }
 
 wait_for_http() {
@@ -319,6 +361,7 @@ start_validator() {
 		--dynamic-port-range "${DYNAMIC_PORT_START}-${DYNAMIC_PORT_END}" \
 		--bind-address 127.0.0.1 \
 		--geyser-plugin-config "${PLUGIN_CONFIG_JSON}" \
+		--account "$(tr -d '\n' < "${HISTORICAL_AVG_VERIFIER_PUBKEY_FILE}")" "${HISTORICAL_AVG_VERIFIER_FIXTURE}" \
 		--bpf-program "${SONAR_PROGRAM_ID}" "${ROOT_DIR}/target/deploy/sonar_program.so" \
 		--bpf-program "${ECHO_CALLBACK_PROGRAM_ID}" "${ROOT_DIR}/target/deploy/echo_callback.so" \
 		>"${LOG_DIR}/validator.log" 2>&1 &
@@ -598,6 +641,7 @@ start_stack() {
 	start_containers
 	write_plugin_config
 	write_runtime_config
+	write_historical_avg_verifier_fixture
 	generate_keypairs
 	start_validator
 	fund_keypairs

@@ -22,6 +22,9 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Prepare temp workspace
+        run: mkdir -p "$TMPDIR"
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -180,6 +183,9 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Prepare temp workspace
+        run: mkdir -p "$TMPDIR"
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -193,13 +199,27 @@ jobs:
       - name: Cache Rust artifacts
         uses: Swatinem/rust-cache@v2
 
-      - name: Prepare temp workspace
-        run: mkdir -p "$TMPDIR"
+      - name: Cache Solana platform-tools
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/solana/v1.53/platform-tools
+          key: ${{ runner.os }}-solana-platform-tools-v1.53
 
       - name: Install build prerequisites
         run: |
-          sudo apt-get update
-          sudo apt-get install -y protobuf-compiler pkg-config libudev-dev
+          for attempt in 1 2 3; do
+            if sudo apt-get update -o Acquire::Retries=3 && sudo apt-get install -y protobuf-compiler pkg-config libudev-dev; then
+              exit 0
+            fi
+
+            if [ "$attempt" -eq 3 ]; then
+              echo "ERROR: failed to install build prerequisites after $attempt attempts"
+              exit 1
+            fi
+
+            echo "apt prerequisite install attempt $attempt failed; retrying in 10s"
+            sleep 10
+          done
 
       - name: Enable Docker socket access
         run: sudo chmod 666 /var/run/docker.sock
@@ -229,6 +249,42 @@ jobs:
           } > "$HOME/.local/bin/cargo-build-sbf"
           chmod +x "$HOME/.local/bin/cargo-build-sbf"
           echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+      - name: Preinstall Solana platform-tools with retries
+        run: |
+          install_root="$HOME/.cache/solana/v1.53/platform-tools"
+          asset_url="https://github.com/anza-xyz/platform-tools/releases/download/v1.53/platform-tools-linux-x86_64.tar.bz2"
+
+          if [ -x "$install_root/rust/bin/rustc" ]; then
+            "$install_root/rust/bin/rustc" --version
+            exit 0
+          fi
+
+          tmp_dir="$(mktemp -d)"
+          trap 'rm -rf "$tmp_dir"' EXIT
+
+          for attempt in 1 2 3; do
+            rm -f "$tmp_dir/platform-tools-linux-x86_64.tar.bz2"
+            rm -rf "$tmp_dir/platform-tools"
+            mkdir -p "$tmp_dir/platform-tools"
+
+            if curl --fail --location --retry 5 --retry-all-errors --retry-delay 5 "$asset_url" -o "$tmp_dir/platform-tools-linux-x86_64.tar.bz2" \
+              && tar -C "$tmp_dir/platform-tools" --strip-components 1 -jxf "$tmp_dir/platform-tools-linux-x86_64.tar.bz2"; then
+              rm -rf "$install_root"
+              mkdir -p "$install_root"
+              cp -a "$tmp_dir/platform-tools"/. "$install_root/"
+              "$install_root/rust/bin/rustc" --version
+              exit 0
+            fi
+
+            if [ "$attempt" -eq 3 ]; then
+              echo "ERROR: failed to preinstall Solana platform-tools after $attempt attempts"
+              exit 1
+            fi
+
+            echo "platform-tools direct download attempt $attempt failed; retrying in 10s"
+            sleep 10
+          done
 
       - name: Install npm dependencies
         run: npm install
@@ -275,10 +331,27 @@ jobs:
       - name: Cache Rust artifacts
         uses: Swatinem/rust-cache@v2
 
+      - name: Cache Solana platform-tools
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/solana/v1.53/platform-tools
+          key: ${{ runner.os }}-solana-platform-tools-v1.53
+
       - name: Install build prerequisites
         run: |
-          sudo apt-get update
-          sudo apt-get install -y protobuf-compiler pkg-config libudev-dev
+          for attempt in 1 2 3; do
+            if sudo apt-get update -o Acquire::Retries=3 && sudo apt-get install -y protobuf-compiler pkg-config libudev-dev; then
+              exit 0
+            fi
+
+            if [ "$attempt" -eq 3 ]; then
+              echo "ERROR: failed to install build prerequisites after $attempt attempts"
+              exit 1
+            fi
+
+            echo "apt prerequisite install attempt $attempt failed; retrying in 10s"
+            sleep 10
+          done
 
       - name: Enable Docker socket access
         run: sudo chmod 666 /var/run/docker.sock
@@ -308,6 +381,42 @@ jobs:
           } > "$HOME/.local/bin/cargo-build-sbf"
           chmod +x "$HOME/.local/bin/cargo-build-sbf"
           echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+      - name: Preinstall Solana platform-tools with retries
+        run: |
+          install_root="$HOME/.cache/solana/v1.53/platform-tools"
+          asset_url="https://github.com/anza-xyz/platform-tools/releases/download/v1.53/platform-tools-linux-x86_64.tar.bz2"
+
+          if [ -x "$install_root/rust/bin/rustc" ]; then
+            "$install_root/rust/bin/rustc" --version
+            exit 0
+          fi
+
+          tmp_dir="$(mktemp -d)"
+          trap 'rm -rf "$tmp_dir"' EXIT
+
+          for attempt in 1 2 3; do
+            rm -f "$tmp_dir/platform-tools-linux-x86_64.tar.bz2"
+            rm -rf "$tmp_dir/platform-tools"
+            mkdir -p "$tmp_dir/platform-tools"
+
+            if curl --fail --location --retry 5 --retry-all-errors --retry-delay 5 "$asset_url" -o "$tmp_dir/platform-tools-linux-x86_64.tar.bz2" \
+              && tar -C "$tmp_dir/platform-tools" --strip-components 1 -jxf "$tmp_dir/platform-tools-linux-x86_64.tar.bz2"; then
+              rm -rf "$install_root"
+              mkdir -p "$install_root"
+              cp -a "$tmp_dir/platform-tools"/. "$install_root/"
+              "$install_root/rust/bin/rustc" --version
+              exit 0
+            fi
+
+            if [ "$attempt" -eq 3 ]; then
+              echo "ERROR: failed to preinstall Solana platform-tools after $attempt attempts"
+              exit 1
+            fi
+
+            echo "platform-tools direct download attempt $attempt failed; retrying in 10s"
+            sleep 10
+          done
 
       - name: Install npm dependencies
         run: npm install

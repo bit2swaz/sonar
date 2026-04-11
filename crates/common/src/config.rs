@@ -290,4 +290,50 @@ metrics_port = 9090
             env::remove_var(var);
         }
     }
+
+    #[test]
+    fn test_devnet_toml_loads_with_env() {
+        env::set_var("SOLANA_RPC_URL", "https://api.devnet.solana.com");
+        env::set_var("SOLANA_WS_URL", "wss://api.devnet.solana.com");
+        env::set_var("HELIUS_API_KEY", "dummy-devnet-key");
+        env::set_var(
+            "HELIUS_RPC_URL",
+            "https://devnet.helius-rpc.com/?api-key=dummy-devnet-key",
+        );
+        env::set_var(
+            "DATABASE_URL",
+            "postgresql://postgres:password@localhost:5432/sonar_devnet",
+        );
+        env::set_var("REDIS_URL", "redis://localhost:6379");
+        env::set_var("SP1_PROVING_KEY", "/tmp/sp1-devnet.key");
+        env::set_var("GROTH16_PARAMS", "/tmp/groth16-devnet.params");
+
+        let manifest = env::var("CARGO_MANIFEST_DIR").unwrap();
+        let root = std::path::PathBuf::from(&manifest)
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .to_owned();
+        let path = root.join("config/devnet.toml");
+
+        let cfg = Config::load(path.to_str().unwrap()).unwrap();
+        assert_eq!(cfg.network.chain_id, "devnet");
+        assert_eq!(cfg.indexer.http_port, 8080);
+        assert_eq!(cfg.coordinator.indexer_url, "http://localhost:8080");
+        assert!(cfg.prover.mock_prover);
+
+        for var in &[
+            "SOLANA_RPC_URL",
+            "SOLANA_WS_URL",
+            "HELIUS_API_KEY",
+            "HELIUS_RPC_URL",
+            "DATABASE_URL",
+            "REDIS_URL",
+            "SP1_PROVING_KEY",
+            "GROTH16_PARAMS",
+        ] {
+            env::remove_var(var);
+        }
+    }
 }

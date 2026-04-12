@@ -11,3 +11,5 @@ This directory contains the guest source for the Phase 3.1 SP1 smoke-test progra
 3. Copy the generated ELF into `programs/fibonacci/elf/fibonacci-program`.
 
 The repository already vendors a prebuilt ELF at `programs/fibonacci/elf/fibonacci-program` so normal `cargo test` and CI runs do not require SP1 build tooling.
+
+This guest remains the smallest proof-generation example in the repository and is useful when validating artifact-export and demo-style verification flows.

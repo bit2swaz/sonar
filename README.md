@@ -1,6 +1,6 @@
 # Sonar
 
-Sonar is a Solana-native ZK coprocessor prototype built around an Anchor program, an off-chain proving pipeline, and a thin developer surface for submitting requests and registering verifiers. The repo now contains a full request -> prove -> callback -> index loop, a real CPI SDK, a developer CLI for verifier registration, Criterion benchmarks for hot paths, and CI/security automation suitable for active development.
+Sonar is a Solana-native ZK coprocessor prototype built around an Anchor program, an off-chain proving pipeline, and a thin developer surface for submitting requests and registering verifiers. The repo now contains a full request -> prove -> callback -> index loop, a real CPI SDK, a developer CLI for verifier registration, Criterion benchmarks for hot paths, a repeatable devnet deployment script, and a baseline observability stack for the production-oriented Compose topology.
 
 Sonar is not production-ready yet. The current state is best described as a hardened devnet-quality system with one end-to-end vertical slice (`historical_avg`) and the core primitives needed to expand toward a multi-computation coprocessor.
 
@@ -11,6 +11,8 @@ Sonar is not production-ready yet. The current state is best described as a hard
 - `historical_avg` runs end-to-end with an ignored integration test and CI coverage.
 - `crates/sdk` provides a real Anchor CPI helper for downstream programs.
 - `crates/cli` provides `sonar-cli register` for verifier registration.
+- `scripts/deploy-devnet.sh` automates wallet checks, build, deploy, and post-deploy verification on devnet.
+- `docker-compose.prod.yml` now includes Prometheus and Grafana alongside the coordinator/prover stack.
 - CI runs Rust checks, Anchor build/tests, dependency/license scanning, and secret scanning.
 - Benchmarks exist for coordinator and prover hot paths.
 
@@ -31,6 +33,9 @@ flowchart LR
     B -->|fee payout| J[Prover authority]
     K[Geyser plugin] --> L[(Postgres)]
     L --> E
+    D -. metrics .-> M[Prometheus]
+    G -. metrics .-> M
+    M --> N[Grafana]
 ```
 
 ## Repository map
@@ -46,6 +51,9 @@ flowchart LR
 | `programs/historical_avg_client/` | Example consumer program that requests the historical-average computation              |
 | `echo_callback/`                  | Minimal callback target used by integration flows                                      |
 | `tests/`                          | Rust integration/e2e coverage, including historical-average orchestration              |
+| `docker/`                         | Container build files plus Prometheus scrape config for the prod-oriented stack        |
+| `scripts/`                        | Devnet deployment, local CI, and demo verification helpers                             |
+| `.github/workflows/`              | CI, e2e, demo verification, audit, deny, and secret-scanning automation                |
 | `docs/`                           | Current-state, target-state, roadmap, architecture, and contribution docs              |
 
 ## Prerequisites
@@ -74,6 +82,14 @@ cargo build -p sonar-indexer --lib
 anchor build
 cargo test --test e2e_historical_avg -- --ignored --nocapture
 ```
+
+For the prod-oriented off-chain stack with baseline observability:
+
+```bash
+docker compose -f docker-compose.prod.yml up --build
+```
+
+That stack launches `postgres`, `redis`, `coordinator`, `prover`, `prometheus`, and `grafana`. It expects an indexer API to be reachable at `INDEXER_URL` and exposes Grafana on `http://localhost:3000` by default.
 
 ## Common workflows
 
@@ -128,6 +144,30 @@ scripts/local-ci.sh pull_request
 scripts/local-ci.sh -W .github/workflows/ci.yml -j check
 ```
 
+If your environment requires authentication to pull the configured runner image, run `docker login` before starting local `act` runs.
+
+### Devnet deployment
+
+Use the deployment helper when you want a repeatable devnet release of the Anchor workspace:
+
+```bash
+scripts/deploy-devnet.sh
+```
+
+The script:
+
+- resolves the deploy wallet from `ANCHOR_WALLET` or `Anchor.toml`
+- ensures the wallet has at least 2 SOL on devnet, requesting an airdrop if needed
+- runs `anchor keys sync`
+- builds the workspace with a platform-tools fallback when needed
+- deploys to devnet and verifies the deployed program account
+
+### Observability stack
+
+- `docker/prometheus/prometheus.yml` scrapes the coordinator on `9090` and prover on `9091`
+- `docker-compose.prod.yml` wires Grafana to host port `3000`
+- metrics ports stay configurable through `COORDINATOR_METRICS_PORT` and `PROVER_METRICS_PORT`
+
 ### Benchmarks
 
 ```bash
@@ -157,12 +197,15 @@ cargo run -p sonar-cli -- register \
 - `config/default.toml` and `config/devnet.toml` define runtime configuration.
 - The off-chain stack is environment-driven for secrets and endpoints.
 - The indexer expects Postgres, the coordinator/prover expect Redis, and Solana RPC/WS endpoints are supplied via config or env vars.
+- `docker-compose.prod.yml` defaults `INDEXER_URL` to `http://host.docker.internal:8080`, so the current prod-oriented Compose stack assumes the indexer is managed outside that file.
+- Grafana credentials and host port are controlled through `GRAFANA_ADMIN_USER`, `GRAFANA_ADMIN_PASSWORD`, and `GRAFANA_PORT`.
 
 ## Validation and security automation
 
 - CI: format, clippy, unit/integration tests, Anchor build/tests, e2e flow, and demo verification.
 - Security workflow: `cargo audit`, `cargo deny`, and `gitleaks`.
 - Pre-commit hooks: Rust fmt/clippy, `cargo deny`, `cargo audit`, and Prettier for Markdown/JSON/YAML.
+- Local CI runs go through `scripts/local-ci.sh`, `.secrets`, and the `.actrc` mapping for `ubuntu-latest`.
 
 ## Limits of the current repo
 
@@ -170,6 +213,7 @@ cargo run -p sonar-cli -- register \
 - Verifier registration exists, but operational lifecycle management and governance are still manual.
 - The repo proves one strong vertical slice today rather than a broad catalog of production computations.
 - The system is still oriented around devnet/local-validator workflows, not a hardened mainnet rollout.
+- Observability is still baseline-only: metrics scraping and Grafana exist, but dashboards, alerts, tracing, and runbooks remain incomplete.
 
 ## Read next
 

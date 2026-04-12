@@ -76,6 +76,8 @@ Operators should be able to answer, in real time:
 - whether the indexer is fresh enough for enrichment workloads
 - whether payout economics remain healthy under current load
 
+The current repository now provides a baseline seed for this pillar through in-repo Prometheus scraping config and a Grafana service in the prod-oriented Compose stack, but production readiness still requires curated dashboards, alerts, tracing, and on-call runbooks.
+
 ### 5. Safe external adoption
 
 Production Sonar should make it easy for downstream teams to integrate safely:
@@ -94,6 +96,7 @@ Before Sonar should be presented as production-capable, it should have:
 - verifier governance and break-glass procedures
 - incident playbooks for queue outages, proof failures, and stale indexer data
 - dashboard coverage for all critical service and chain-facing paths
+- an explicit operating model for the indexer in production (in-stack or separately managed)
 - external security review aligned with deployment scope
 
 ## What the current repo already contributes
@@ -105,5 +108,7 @@ The present repository already provides strong seeds for this target:
 - the proving and artifact pipeline exists
 - an end-to-end computation slice exists
 - CI/security automation and benchmarks now exist
+- a repeatable devnet deployment script exists
+- a baseline Prometheus/Grafana topology exists for the prod-oriented stack
 
 The remaining work is mainly operational maturity, governance, and scale.

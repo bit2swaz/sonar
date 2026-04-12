@@ -11,7 +11,7 @@ Sonar has already crossed the threshold from “design sketch” to “working s
 - the coordinator/prover/indexer pipeline exists
 - `historical_avg` works end-to-end
 - the repo ships a CPI SDK and a verifier-registration CLI
-- hardening, benchmarks, and security automation are now in place
+- hardening, benchmarks, security automation, devnet deployment automation, and baseline observability are now in place
 
 The next phase is less about inventing new primitives and more about productionizing the ones that now exist.
 
@@ -27,6 +27,8 @@ The next phase is less about inventing new primitives and more about productioni
 | Developer SDK                     | Complete | `crates/sdk` provides a real CPI helper                                 |
 | Developer CLI                     | Complete | `crates/cli` provides verifier registration                             |
 | Hardening and benchmarks          | Complete | Panic-path cleanup, failure tests, Criterion benches, CI/security gates |
+| Devnet deployment automation      | Complete | `scripts/deploy-devnet.sh` covers wallet funding, build, deploy, verify |
+| Baseline observability            | Complete | Prod-oriented Compose includes Prometheus + Grafana                     |
 | Documentation refresh             | Complete | README + docs now aligned to current repo state                         |
 | Production operations             | Planned  | SLOs, runbooks, staged rollout, on-call practices                       |
 | Production economics              | Planned  | fee policy, proving cost controls, congestion handling                  |
@@ -74,6 +76,9 @@ Recent work added the first real hardening layer:
 - Criterion benchmarks for coordinator and prover hot paths
 - explicit CI coverage for Anchor and e2e flows
 - supply-chain and secret-scanning automation
+- a repeatable devnet deployment helper
+- baseline Prometheus/Grafana wiring for the prod-oriented stack
+- a local `act` wrapper and runner mapping for pre-push CI rehearsal
 
 ## What comes next
 
@@ -85,6 +90,8 @@ Highest-value remaining work:
 - document deploy, rollback, and incident-response runbooks
 - make recovery and replay workflows routine rather than ad hoc
 - add stronger environment separation between local/devnet/staging/production
+- provision Grafana dashboards, alerting rules, and tracing rather than metrics-only visibility
+- either package the indexer into the prod-oriented topology or formalize its external-operator contract
 
 ### Production economics
 

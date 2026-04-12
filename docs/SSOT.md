@@ -14,6 +14,9 @@ Sonar currently includes all of the following in-tree:
 | Coordinator              | Implemented in `crates/coordinator/`                 |
 | Prover                   | Implemented in `crates/prover/`                      |
 | Indexer + Geyser plugin  | Implemented in `crates/indexer/`                     |
+| Prod-oriented Compose    | Implemented in `docker-compose.prod.yml`             |
+| Observability baseline   | Prometheus + Grafana config in-tree                  |
+| Devnet deploy automation | Implemented in `scripts/deploy-devnet.sh`            |
 | Example callback program | `echo_callback/`                                     |
 | Example consumer         | `programs/historical_avg_client/`                    |
 | Example SP1 guests       | `programs/fibonacci/` and `programs/historical_avg/` |
@@ -98,6 +101,24 @@ The indexer currently includes:
 - an Axum server exposing `GET /account_history/:pubkey?from_slot=<u64>&to_slot=<u64>`
 - database helpers used by integration and end-to-end flows
 
+## Operational assets that exist today
+
+The repository includes the following operational helpers and topology files:
+
+- `docker-compose.prod.yml` for `postgres`, `redis`, `coordinator`, `prover`, `prometheus`, and `grafana`
+- `docker/prometheus/prometheus.yml` for scraping coordinator and prover metrics
+- `scripts/deploy-devnet.sh` for repeatable Anchor workspace deployment to devnet
+- `scripts/local-ci.sh` and `.actrc` for local GitHub Actions execution via `act`
+
+Important current nuance: the prod-oriented Compose file does not run the indexer. `INDEXER_URL` defaults to `http://host.docker.internal:8080`, so the coordinator and prover currently expect an externally managed indexer API.
+
+The coordinator and prover expose Prometheus metrics via:
+
+- `COORDINATOR_METRICS_PORT` default `9090`
+- `PROVER_METRICS_PORT` default `9091`
+
+Grafana is exposed on host port `3000` by default through `GRAFANA_PORT`.
+
 ## Developer surfaces that exist today
 
 ### SDK
@@ -145,6 +166,7 @@ The repo currently has:
 - `cargo deny`
 - `gitleaks`
 - Criterion benchmarks for coordinator and prover hot paths
+- local `act` automation through `scripts/local-ci.sh`
 
 ## Current limitations
 
@@ -152,6 +174,7 @@ These are factual current gaps, not roadmap promises:
 
 - the system is still best treated as devnet-grade rather than production-grade
 - verifier lifecycle governance is manual
-- operational runbooks and SLOs are not yet formalized in-repo
+- operational runbooks, dashboards, tracing, alerts, and SLOs are not yet formalized in-repo
 - external APIs and SDK ergonomics are still narrow and computation-specific
 - the indexer API surface is intentionally small today
+- the prod-oriented Compose topology still assumes an external indexer service

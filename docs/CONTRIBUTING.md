@@ -46,6 +46,23 @@ cargo build -p sonar-indexer --lib
 cargo test --test e2e_historical_avg -- --ignored --nocapture
 ```
 
+If you touch GitHub Actions or release automation, also run the relevant local workflow through the repo wrapper when possible:
+
+```bash
+cp .secrets.example .secrets
+scripts/local-ci.sh -W .github/workflows/ci.yml -j check
+scripts/local-ci.sh -W .github/workflows/security.yml -j audit
+```
+
+The repository's `.actrc` maps `ubuntu-latest` to `catthehacker/ubuntu:full-latest` so local CI is closer to the hosted GitHub runner environment. If your machine requires registry authentication to pull that runner image, run `docker login` first.
+
+If you touch devnet deployment or the prod-oriented service topology, also sanity-check the relevant operational entrypoints:
+
+```bash
+bash -n scripts/deploy-devnet.sh
+docker compose -f docker-compose.prod.yml config
+```
+
 If you touch hot paths in the coordinator or prover, consider running:
 
 ```bash
@@ -82,6 +99,17 @@ If you change any of the following, update the docs in the same PR when needed:
 - roadmap status
 - verifier/artifact flow
 - config expectations
+- deployment or observability workflows
+
+The canonical permanent docs are:
+
+- `README.md`
+- `docs/SSOT.md`
+- `docs/ROADMAP.md`
+- `docs/ARCHITECTURE.md`
+- `docs/PROD_TARGET.md`
+- `docs/CONTRIBUTING.md`
+- `SECURITY.md`
 
 If you touch a Mermaid diagram, make sure the surrounding prose still matches the implementation.
 
@@ -110,6 +138,16 @@ Expect to update some combination of:
 - e2e historical-average flow
 - config docs
 - operations-focused sections of the README and architecture docs
+
+### Deployment and ops changes
+
+Expect to update some combination of:
+
+- `docker-compose.prod.yml`
+- `docker/prometheus/prometheus.yml`
+- README operational workflow sections
+- SSOT and architecture notes about topology boundaries
+- roadmap / prod-target notes when the capability level changes
 
 ### Verifier or proving changes
 

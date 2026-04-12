@@ -73,6 +73,8 @@ The dedicated security workflow currently runs:
 - `cargo deny check`
 - `gitleaks`
 
+Those checks can also be rehearsed locally through `scripts/local-ci.sh` once `.secrets` exists. Some local `act` environments may also require `docker login` before the configured runner image can be pulled.
+
 ### Local hooks
 
 The pre-commit configuration includes:
@@ -88,6 +90,7 @@ The pre-commit configuration includes:
 - prefer fixing panic paths and unchecked assumptions in long-running services
 - validate artifact integrity whenever verifier material crosses a trust boundary
 - keep secrets in environment variables or local config, never in committed files
+- keep `.secrets` local-only and start from `.secrets.example` when using local CI
 - update docs when a trust boundary or operator workflow changes
 - favor fail-closed behavior for proof, verifier, and callback mismatches
 

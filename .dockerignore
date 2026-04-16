@@ -5,6 +5,7 @@ node_modules
 .actrc
 .demo
 test-ledger
+.anchor
 temp
 .DS_Store
 .env

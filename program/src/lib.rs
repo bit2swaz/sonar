@@ -22,7 +22,7 @@ mod verifier_registry;
 
 pub use verifier_registry::{VerifierRegistry, DEMO_COMPUTATION_ID, HISTORICAL_AVG_COMPUTATION_ID};
 
-declare_id!("EE2sQ2VRa1hY3qjPQ1PEwuPZX6dGwTZwHMCumWrGn3sV");
+declare_id!("Gf7RSZYmfNJ5kv2AJvcv5rjCANP6ePExJR19D91MECLY");
 
 const MAX_RESULT_BYTES: usize = 10_000;
 const GROTH16_PROOF_A_BYTES: usize = 64;

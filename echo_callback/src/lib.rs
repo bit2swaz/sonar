@@ -17,7 +17,7 @@ use anchor_lang::prelude::*;
 // Placeholder ID — the TypeScript tests always read the actual deployed address
 // from target/deploy/echo_callback-keypair.json, so this constant is only used
 // by the IDL and by `anchor.workspace.EchoCallback` (which we do not use).
-declare_id!("3RBU9G6Mws9nS8bQPg2cVRbS2v7CgsjAvv2MwmTcmbyA");
+declare_id!("J7jsJVQz6xbWFhyxRbzk7nH5ALhStztUNR1nPupnyjxS");
 
 #[program]
 pub mod echo_callback {

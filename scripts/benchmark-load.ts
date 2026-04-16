@@ -19,8 +19,8 @@ import type { Sonar } from "../target/types/sonar";
 
 const DEFAULT_RPC_URL = clusterApiUrl("devnet");
 const DEFAULT_WALLET_PATH = resolve(homedir(), ".config/solana/id.json");
-const DEFAULT_PROGRAM_ID = new PublicKey("5B1rXQ71oEWUPc3AemCBTQtb5pmGAnX1jbGvZKcgBy84");
-const DEFAULT_CALLBACK_PROGRAM_ID = new PublicKey("3RBU9G6Mws9nS8bQPg2cVRbS2v7CgsjAvv2MwmTcmbyA");
+const DEFAULT_PROGRAM_ID = new PublicKey("Gf7RSZYmfNJ5kv2AJvcv5rjCANP6ePExJR19D91MECLY");
+const DEFAULT_CALLBACK_PROGRAM_ID = new PublicKey("J7jsJVQz6xbWFhyxRbzk7nH5ALhStztUNR1nPupnyjxS");
 const DEFAULT_REQUEST_FEE_LAMPORTS = 100_000;
 const DEFAULT_DEADLINE_SLOT_DELTA = 5_000;
 const DEFAULT_COMMITMENT: Commitment = "confirmed";

@@ -4,7 +4,7 @@
 use anchor_lang::prelude::*;
 use sonar_program::{self, program::Sonar, RequestParams as SonarRequestParams};
 
-declare_id!("4iFJKn91J7zvGbaXvezVGJkpYfmC3xJdY2Er7U616G96");
+declare_id!("2GNQ6iMwsH5RLJQ5Fhj5ieHmMhzgCT3y7DKx8tvspqJd");
 
 const RAW_HISTORICAL_AVG_INPUTS_LEN: usize = 48;
 const MAX_RESULT_BYTES: usize = 8;

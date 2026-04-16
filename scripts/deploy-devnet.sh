@@ -117,8 +117,8 @@ build_with_fallback() {
     return 0
   fi
 
-  log "Default anchor build failed; retrying with Solana platform-tools v1.53"
-  anchor build -- --tools-version v1.53
+  log "Default anchor build failed; retrying without IDL generation on Solana platform-tools v1.53"
+  anchor build --no-idl -- --tools-version v1.53
 }
 
 require_command awk

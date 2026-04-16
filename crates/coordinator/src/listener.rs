@@ -38,7 +38,7 @@ use crate::dispatcher;
 // ---------------------------------------------------------------------------
 
 /// Sonar on-chain program ID.
-pub const PROGRAM_ID_STR: &str = "EE2sQ2VRa1hY3qjPQ1PEwuPZX6dGwTZwHMCumWrGn3sV";
+pub const PROGRAM_ID_STR: &str = "Gf7RSZYmfNJ5kv2AJvcv5rjCANP6ePExJR19D91MECLY";
 
 /// Prefix emitted by `msg!("sonar:request:{}", hex_id)` in the program.
 const LOG_REQUEST_PREFIX: &str = "Program log: sonar:request:";

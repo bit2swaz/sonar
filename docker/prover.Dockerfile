@@ -5,8 +5,12 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         ca-certificates \
         clang \
+        libprotobuf-dev \
         libssl-dev \
         lld \
+        make \
+        perl \
+        protobuf-compiler \
         pkg-config \
     && rm -rf /var/lib/apt/lists/*
 

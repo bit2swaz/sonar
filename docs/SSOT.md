@@ -171,6 +171,7 @@ The repo currently has:
 For callback validation specifically, the current local default is now layered:
 
 - cheap prover/unit coverage for Groth16 payload shape and malformed-input behavior
+- deterministic fixture-backed `historical_avg` callback coverage for the ignored local stack e2e path when the prover is explicitly run in mock mode
 - Anchor integration coverage for callback invariants
 - heavyweight real SP1 Groth16 smoke kept as explicit opt-in coverage rather than the default local gate
 

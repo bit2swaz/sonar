@@ -1,3 +1,4 @@
+mod callback_fixtures;
 pub mod artifacts;
 pub mod groth16_wrapper;
 pub mod registry;
@@ -7,15 +8,20 @@ pub mod sp1_wrapper;
 use sonar_common::types::ComputationId;
 
 use crate::{
+    callback_fixtures::maybe_fixture_callback_payload,
     groth16_wrapper::{
         extract_sp1_groth16_payload_from_proof, wrap_stark_to_groth16,
     },
     registry::{resolve_computation, HISTORICAL_AVG_ELF_PATH},
     sp1_wrapper::{
-        build_sp1_program, run_historical_avg_program_groth16_only,
-        run_historical_avg_program_groth16_proof, run_sp1_program_groth16_only,
+        build_sp1_program, run_historical_avg_program_groth16_proof,
         run_sp1_program_groth16_proof, Sp1Groth16ProofResult,
     },
+};
+
+#[cfg(test)]
+use crate::sp1_wrapper::{
+    run_historical_avg_program_groth16_only, run_sp1_program_groth16_only,
 };
 
 pub use artifacts::{
@@ -51,6 +57,7 @@ fn run_computation(
     }
 }
 
+#[cfg(test)]
 fn run_callback_computation(
     computation_id: &[u8; 32],
     inputs: &[u8],
@@ -93,6 +100,10 @@ pub fn prove_callback_payload(
     computation_id: &[u8; 32],
     inputs: &[u8],
 ) -> anyhow::Result<(Vec<u8>, Vec<u8>, Vec<Vec<u8>>)> {
+    if let Some(payload) = maybe_fixture_callback_payload(computation_id, inputs)? {
+        return Ok(payload);
+    }
+
     let proof_result = run_callback_proof(computation_id, inputs)?;
     let payload = extract_sp1_groth16_payload_from_proof(&proof_result.proof)?;
 
@@ -109,6 +120,7 @@ mod tests {
 
     use super::*;
     use crate::{
+        callback_fixtures::HISTORICAL_AVG_CALLBACK_FIXTURE_ENV,
         groth16_wrapper::{extract_sp1_groth16_payload, wrap_stark_to_groth16},
         registry::{FIBONACCI_ELF_PATH, HISTORICAL_AVG_ELF_PATH},
         sp1_wrapper::{load_proof_bundle, run_historical_avg_program, run_sp1_program, Sp1ProofBundle},
@@ -280,7 +292,9 @@ mod tests {
             .lock()
             .expect("SP1 env lock should not be poisoned");
         let previous = std::env::var("SP1_PROVER").ok();
+        let previous_fixture = std::env::var(HISTORICAL_AVG_CALLBACK_FIXTURE_ENV).ok();
         std::env::set_var("SP1_PROVER", "mock");
+        std::env::remove_var(HISTORICAL_AVG_CALLBACK_FIXTURE_ENV);
 
         let computation_id = historical_avg_computation_id().expect("computation id should derive");
         let balances = vec![200_u64, 280_u64, 150_u64, 480_u64];
@@ -300,6 +314,50 @@ mod tests {
             std::env::set_var("SP1_PROVER", value);
         } else {
             std::env::remove_var("SP1_PROVER");
+        }
+
+        if let Some(value) = previous_fixture {
+            std::env::set_var(HISTORICAL_AVG_CALLBACK_FIXTURE_ENV, value);
+        } else {
+            std::env::remove_var(HISTORICAL_AVG_CALLBACK_FIXTURE_ENV);
+        }
+    }
+
+    #[test]
+    fn test_prove_historical_avg_mock_with_callback_fixture_returns_payload() {
+        let _guard = SP1_ENV_LOCK
+            .lock()
+            .expect("SP1 env lock should not be poisoned");
+        let previous = std::env::var("SP1_PROVER").ok();
+        let previous_fixture = std::env::var(HISTORICAL_AVG_CALLBACK_FIXTURE_ENV).ok();
+        std::env::set_var("SP1_PROVER", "mock");
+        std::env::set_var(HISTORICAL_AVG_CALLBACK_FIXTURE_ENV, "1");
+
+        let computation_id = historical_avg_computation_id().expect("computation id should derive");
+        let balances = vec![200_u64, 280_u64, 150_u64, 480_u64];
+        let encoded = bincode::serialize(&balances).expect("serialize balances");
+        let expected = sp1_wrapper::compute_historical_avg_result(&balances)
+            .to_le_bytes()
+            .to_vec();
+
+        let (proof, result, public_inputs) =
+            prove_callback_payload(&computation_id, &encoded).expect("fixture payload should succeed");
+
+        assert_eq!(proof.len(), 256);
+        assert_eq!(result, expected);
+        assert_eq!(public_inputs.len(), 9);
+        assert!(public_inputs.iter().all(|input| input.len() == 32));
+
+        if let Some(value) = previous {
+            std::env::set_var("SP1_PROVER", value);
+        } else {
+            std::env::remove_var("SP1_PROVER");
+        }
+
+        if let Some(value) = previous_fixture {
+            std::env::set_var(HISTORICAL_AVG_CALLBACK_FIXTURE_ENV, value);
+        } else {
+            std::env::remove_var(HISTORICAL_AVG_CALLBACK_FIXTURE_ENV);
         }
     }
 

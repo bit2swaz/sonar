@@ -199,6 +199,7 @@ cargo bench -p sonar-prover
 ### Proof-validation workflow
 
 - Default local validation should rely on the fast unit and Anchor integration suites.
+- The ignored `e2e_historical_avg` harness now uses a deterministic historical-average callback fixture when the prover runs in mock mode, so the full local stack can be exercised without live Groth16 generation.
 - Expensive real SP1 Groth16 smoke tests are opt-in and are better suited to higher-memory or GPU-capable machines, or CI/nightly coverage.
 - Run `bash scripts/anchor-test.sh` for the Anchor suite; it handles the repo's `sonar` versus `sonar_program` IDL-name mismatch before invoking Anchor.
 

@@ -30,6 +30,7 @@ pub fn run_sp1_program(elf: &[u8], inputs: &[u8]) -> anyhow::Result<(Vec<u8>, Ve
     run_sp1_program_internal(elf, inputs, true, true)
 }
 
+#[cfg(test)]
 pub(crate) fn run_sp1_program_groth16_only(
     elf: &[u8],
     inputs: &[u8],
@@ -172,6 +173,7 @@ pub fn run_historical_avg_program(
     run_historical_avg_program_internal(elf, inputs, true, true)
 }
 
+#[cfg(test)]
 pub(crate) fn run_historical_avg_program_groth16_only(
     elf: &[u8],
     inputs: &[u8],

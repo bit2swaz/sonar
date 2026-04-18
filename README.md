@@ -83,6 +83,16 @@ anchor build
 cargo test --test e2e_historical_avg -- --ignored --nocapture
 ```
 
+For expensive real-proof smoke coverage that is not part of the default local gate:
+
+```bash
+cargo test -p sonar-prover --lib \
+  tests::test_extract_sp1_groth16_payload_matches_real_sp1_shape_live_smoke \
+  -- --ignored --exact --nocapture
+```
+
+That prover smoke is intentionally opt-in. On lower-memory no-swap laptops it may be SIGKILLed even when the callback path is logically correct.
+
 For the prod-oriented off-chain stack with baseline observability:
 
 ```bash
@@ -174,6 +184,12 @@ The script:
 cargo bench -p sonar-coordinator
 cargo bench -p sonar-prover
 ```
+
+### Proof-validation workflow
+
+- Default local validation should rely on the fast unit and Anchor integration suites.
+- Expensive real SP1 Groth16 smoke tests are opt-in and are better suited to higher-memory or GPU-capable machines, or CI/nightly coverage.
+- A trailing `os error 2` after `anchor test` is currently a known teardown issue in this repo; when the suite reports all tests passing, treat the passing count as the signal until that runner issue is isolated.
 
 ### Export verifier artifacts
 

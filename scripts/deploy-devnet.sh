@@ -25,6 +25,7 @@ MIN_BALANCE_LAMPORTS=2000000000
 POLL_ATTEMPTS=15
 POLL_INTERVAL_SECONDS=2
 SONAR_SOLANA_BIN="$HOME/.local/share/solana/install/active_release/bin"
+DEFAULT_PRIVATE_DEVNET_RPC_URL="https://solana-devnet.core.chainstack.com/51a4443c8b33222e5327f331e007ec91"
 
 if [[ -d "$SONAR_SOLANA_BIN" ]]; then
   export PATH="$SONAR_SOLANA_BIN:$PATH"
@@ -36,11 +37,17 @@ require_command() {
 
 expand_path() {
   local path="$1"
-  case "$path" in
-    ~) printf '%s\n' "$HOME" ;;
-    ~/*) printf '%s/%s\n' "$HOME" "${path#~/}" ;;
-    *) printf '%s\n' "$path" ;;
-  esac
+  if [[ "$path" == "~" ]]; then
+    printf '%s\n' "$HOME"
+    return
+  fi
+
+  if [[ "$path" == "~/"* ]]; then
+    printf '%s/%s\n' "$HOME" "${path:2}"
+    return
+  fi
+
+  printf '%s\n' "$path"
 }
 
 extract_provider_wallet() {
@@ -71,8 +78,9 @@ extract_devnet_program_id() {
 
 get_balance_lamports() {
   local address="$1"
+  local rpc_url="$2"
   local balance_output
-  balance_output="$(solana balance "$address" --url devnet --lamports)"
+  balance_output="$(solana balance "$address" --url "$rpc_url" --lamports)"
   printf '%s\n' "$balance_output" | awk 'NF { print $1; exit }'
 }
 
@@ -94,11 +102,12 @@ PY
 wait_for_balance() {
   local address="$1"
   local minimum_lamports="$2"
+  local rpc_url="$3"
   local attempt=1
   local observed
 
   while (( attempt <= POLL_ATTEMPTS )); do
-    observed="$(get_balance_lamports "$address")"
+    observed="$(get_balance_lamports "$address" "$rpc_url")"
     if [[ "$observed" =~ ^[0-9]+$ ]] && (( observed >= minimum_lamports )); then
       printf '%s\n' "$observed"
       return 0
@@ -136,6 +145,7 @@ wallet_path="$(expand_path "$wallet_path")"
 
 export ANCHOR_WALLET="$wallet_path"
 wallet_pubkey="$(solana address -k "$ANCHOR_WALLET")"
+deploy_rpc_url="${SOLANA_RPC_URL:-${ANCHOR_PROVIDER_URL:-$DEFAULT_PRIVATE_DEVNET_RPC_URL}}"
 current_devnet_program_id="$(extract_devnet_program_id || true)"
 program_keypair="$REPO_ROOT/target/deploy/sonar_program-keypair.json"
 program_pubkey=""
@@ -147,18 +157,18 @@ fi
 log "Using Anchor wallet $ANCHOR_WALLET"
 log "Deploy payer pubkey: $wallet_pubkey"
 
-solana config set --url devnet >/dev/null
-log "Solana CLI RPC URL set to devnet"
+solana config set --url "$deploy_rpc_url" >/dev/null
+log "Solana CLI RPC URL set to $deploy_rpc_url"
 
-current_balance_lamports="$(get_balance_lamports "$wallet_pubkey")"
+current_balance_lamports="$(get_balance_lamports "$wallet_pubkey" "$deploy_rpc_url")"
 [[ "$current_balance_lamports" =~ ^[0-9]+$ ]] || die "unable to parse wallet balance: $current_balance_lamports"
 
 if (( current_balance_lamports < MIN_BALANCE_LAMPORTS )); then
   required_lamports=$(( MIN_BALANCE_LAMPORTS - current_balance_lamports ))
   required_sol="$(lamports_to_sol "$required_lamports")"
   log "Wallet balance below 2 SOL; requesting ${required_sol} SOL airdrop"
-  solana airdrop "$required_sol" "$wallet_pubkey" --url devnet >/dev/null
-  current_balance_lamports="$(wait_for_balance "$wallet_pubkey" "$MIN_BALANCE_LAMPORTS")" || die "airdrop did not raise wallet balance to at least 2 SOL"
+  solana airdrop "$required_sol" "$wallet_pubkey" --url "$deploy_rpc_url" >/dev/null
+  current_balance_lamports="$(wait_for_balance "$wallet_pubkey" "$MIN_BALANCE_LAMPORTS" "$deploy_rpc_url")" || die "airdrop did not raise wallet balance to at least 2 SOL"
 fi
 
 log "Wallet balance: $(lamports_to_sol "$current_balance_lamports") SOL"
@@ -175,11 +185,11 @@ log "Building Anchor workspace"
 build_with_fallback
 
 log "Deploying Anchor workspace to devnet"
-anchor deploy --provider.cluster devnet
+anchor deploy --provider.cluster "$deploy_rpc_url"
 
 if [[ -n "$program_pubkey" ]]; then
   log "Verifying deployed program account $program_pubkey"
-  solana program show "$program_pubkey" --url devnet >/dev/null
+  solana program show "$program_pubkey" --url "$deploy_rpc_url" >/dev/null
   log "Deployment complete for sonar_program: $program_pubkey"
 else
   log "Deployment complete"

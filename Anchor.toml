@@ -39,5 +39,5 @@ ledger = ".anchor/test-ledger"
 rpc_port = 8899
 
 [[test.validator.account]]
-address = "GLjpAkirpXsKMhBNUyzvzsCJr1A4KpYYeLRA8tBn93d7"
+address = "4iKeVhC5EpEu78jdQW2zARKRCoFg7e2NeZS1arv7xt4J"
 filename = "program/tests/fixtures/demo_verifier_registry.json"

@@ -52,12 +52,12 @@ pub enum RequestStatus {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RequestMetadata {
     pub request_id: [u8; 32],
+    pub payer: Pubkey,
     pub callback_program: Pubkey,
-    pub result_account: Pubkey,
+    pub computation_id: [u8; 32],
     pub deadline: u64,
     pub fee: u64,
     pub status: RequestStatus,
-    pub completed_at: Option<u64>,
     pub bump: u8,
 }
 
@@ -199,22 +199,22 @@ mod tests {
     fn test_request_metadata_construction() {
         let meta = RequestMetadata {
             request_id: sample_id(),
-            callback_program: sample_pubkey(1),
-            result_account: sample_pubkey(2),
+            payer: sample_pubkey(1),
+            callback_program: sample_pubkey(2),
+            computation_id: [0xAB; 32],
             deadline: 1_000_000,
             fee: 5_000,
             status: RequestStatus::Pending,
-            completed_at: None,
             bump: 255,
         };
         assert_eq!(meta.request_id[0], 0xDE);
         assert_eq!(meta.request_id[31], 0xAD);
-        assert_eq!(meta.callback_program, sample_pubkey(1));
-        assert_eq!(meta.result_account, sample_pubkey(2));
+        assert_eq!(meta.payer, sample_pubkey(1));
+        assert_eq!(meta.callback_program, sample_pubkey(2));
+        assert_eq!(meta.computation_id, [0xAB; 32]);
         assert_eq!(meta.deadline, 1_000_000);
         assert_eq!(meta.fee, 5_000);
         assert_eq!(meta.status, RequestStatus::Pending);
-        assert!(meta.completed_at.is_none());
         assert_eq!(meta.bump, 255);
     }
 
@@ -222,12 +222,12 @@ mod tests {
     fn test_request_metadata_serde_roundtrip() {
         let meta = RequestMetadata {
             request_id: sample_id(),
-            callback_program: sample_pubkey(3),
-            result_account: sample_pubkey(4),
+            payer: sample_pubkey(3),
+            callback_program: sample_pubkey(4),
+            computation_id: [0xCD; 32],
             deadline: 99,
             fee: 1,
             status: RequestStatus::Completed,
-            completed_at: Some(42),
             bump: 1,
         };
         let json = serde_json::to_string(&meta).unwrap();

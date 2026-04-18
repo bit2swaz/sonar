@@ -15,8 +15,8 @@ HISTORICAL_AVG_VERIFIER_FIXTURE="${DEMO_DIR}/historical-avg-verifier-registry.js
 HISTORICAL_AVG_VERIFIER_PUBKEY_FILE="${DEMO_DIR}/historical-avg-verifier-registry.pubkey"
 DEMO_VERIFIER_FIXTURE_TEMPLATE="${ROOT_DIR}/program/tests/fixtures/demo_verifier_registry.json"
 
-SONAR_PROGRAM_ID="EE2sQ2VRa1hY3qjPQ1PEwuPZX6dGwTZwHMCumWrGn3sV"
-ECHO_CALLBACK_PROGRAM_ID="3RBU9G6Mws9nS8bQPg2cVRbS2v7CgsjAvv2MwmTcmbyA"
+SONAR_PROGRAM_ID="Gf7RSZYmfNJ5kv2AJvcv5rjCANP6ePExJR19D91MECLY"
+ECHO_CALLBACK_PROGRAM_ID="J7jsJVQz6xbWFhyxRbzk7nH5ALhStztUNR1nPupnyjxS"
 
 POSTGRES_CONTAINER="sonar-demo-postgres"
 REDIS_CONTAINER="sonar-demo-redis"

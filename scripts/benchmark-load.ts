@@ -1,7 +1,6 @@
 import * as anchor from "@coral-xyz/anchor";
 import type { Idl } from "@coral-xyz/anchor";
 import {
-  clusterApiUrl,
   Connection,
   LAMPORTS_PER_SOL,
   PublicKey,
@@ -17,7 +16,8 @@ import { performance } from "perf_hooks";
 import sonarIdl from "../target/idl/sonar.json";
 import type { Sonar } from "../target/types/sonar";
 
-const DEFAULT_RPC_URL = clusterApiUrl("devnet");
+const DEFAULT_RPC_URL =
+  process.env.SOLANA_RPC_URL ?? "https://solana-devnet.core.chainstack.com/51a4443c8b33222e5327f331e007ec91";
 const DEFAULT_WALLET_PATH = resolve(homedir(), ".config/solana/id.json");
 const DEFAULT_PROGRAM_ID = new PublicKey("Gf7RSZYmfNJ5kv2AJvcv5rjCANP6ePExJR19D91MECLY");
 const DEFAULT_CALLBACK_PROGRAM_ID = new PublicKey("J7jsJVQz6xbWFhyxRbzk7nH5ALhStztUNR1nPupnyjxS");

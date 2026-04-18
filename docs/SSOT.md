@@ -168,6 +168,12 @@ The repo currently has:
 - Criterion benchmarks for coordinator and prover hot paths
 - local `act` automation through `scripts/local-ci.sh`
 
+For callback validation specifically, the current local default is now layered:
+
+- cheap prover/unit coverage for Groth16 payload shape and malformed-input behavior
+- Anchor integration coverage for callback invariants
+- heavyweight real SP1 Groth16 smoke kept as explicit opt-in coverage rather than the default local gate
+
 ## Current limitations
 
 These are factual current gaps, not roadmap promises:
@@ -178,3 +184,4 @@ These are factual current gaps, not roadmap promises:
 - external APIs and SDK ergonomics are still narrow and computation-specific
 - the indexer API surface is intentionally small today
 - the prod-oriented Compose topology still assumes an external indexer service
+- full local CPU SP1 Groth16 proving remains too heavy for some developer machines, so the repo still depends on optional heavy-proof runners for the strongest live proof-generation coverage

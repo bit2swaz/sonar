@@ -1,5 +1,4 @@
 [network]
-# Devnet runtime endpoints come from the Chainstack-backed env vars.
 rpc_url  = "${SOLANA_RPC_URL}"
 ws_url   = "${SOLANA_WS_URL}"
 chain_id = "devnet"
@@ -11,20 +10,19 @@ max_gas_price_gwei    = 1.0
 
 [rpc]
 helius_api_key = "${HELIUS_API_KEY}"
-# Reuse the same Chainstack devnet endpoint unless you intentionally split providers.
 helius_rpc_url = "${HELIUS_RPC_URL}"
 
 [indexer]
 geyser_plugin_path = "/opt/sonar/libsonar_indexer.so"
 database_url       = "${DATABASE_URL}"
 concurrency        = 2
-http_port          = 8080
+http_port          = 18080
 
 [coordinator]
 redis_url                = "${REDIS_URL}"
 callback_timeout_seconds = 30
 max_concurrent_jobs      = 4
-indexer_url              = "http://localhost:8080"
+indexer_url              = "http://127.0.0.1:18080"
 
 [prover]
 sp1_proving_key_path = "${SP1_PROVING_KEY}"
@@ -33,5 +31,5 @@ groth16_params_path  = "${GROTH16_PARAMS}"
 mock_prover          = false
 
 [observability]
-log_level    = "debug"
-metrics_port = 9090
+log_level    = "info"
+metrics_port = 19090

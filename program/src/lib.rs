@@ -65,19 +65,14 @@ pub mod sonar {
         request_metadata.request_id = params.request_id;
         request_metadata.payer = ctx.accounts.payer.key();
         request_metadata.callback_program = ctx.accounts.callback_program.key();
-        request_metadata.result_account = ctx.accounts.result_account.key();
         request_metadata.computation_id = params.computation_id;
         request_metadata.deadline = params.deadline;
         request_metadata.fee = params.fee;
         request_metadata.status = RequestStatus::Pending;
-        request_metadata.completed_at = None;
         request_metadata.bump = ctx.bumps.request_metadata;
 
         let result_account = &mut ctx.accounts.result_account;
         result_account.request_id = params.request_id;
-        result_account.result = Vec::new();
-        result_account.is_set = false;
-        result_account.written_at = None;
         result_account.bump = ctx.bumps.result_account;
 
         #[cfg(not(target_os = "solana"))]
@@ -134,33 +129,27 @@ pub mod sonar {
             current_slot <= request_metadata.deadline,
             ErrorCode::DeadlinePassed
         );
+        require_keys_eq!(
+            ctx.accounts.payer.key(),
+            request_metadata.payer,
+            ErrorCode::RequestPayerMismatch
+        );
         require!(
-            !ctx.accounts.result_account.is_set,
-            ErrorCode::AlreadyCompleted
+            ctx.accounts.result_account.request_id == request_metadata.request_id,
+            ErrorCode::InvalidRequestId
         );
 
         verify_groth16_proof(&ctx.accounts.verifier_registry, &params)?;
 
-        require!(
-            params.result.len() <= MAX_RESULT_BYTES,
-            ErrorCode::ResultTooLarge
-        );
+        validate_result_size(&params.result)?;
 
         let callback_result = params.result;
         let request_id = request_metadata.request_id;
         let fee = request_metadata.fee;
 
         {
-            let result_account = &mut ctx.accounts.result_account;
-            result_account.result = callback_result.clone();
-            result_account.is_set = true;
-            result_account.written_at = Some(current_slot);
-        }
-
-        {
             let request_metadata = &mut ctx.accounts.request_metadata;
             request_metadata.status = RequestStatus::Completed;
-            request_metadata.completed_at = Some(current_slot);
         }
 
         invoke_callback_program(
@@ -185,7 +174,11 @@ pub mod sonar {
     /// Reclaim the locked fee when a request expires past its deadline.
     pub fn refund(ctx: Context<Refund>) -> Result<()> {
         let request_metadata = &mut ctx.accounts.request_metadata;
-        let current_slot = Clock::get()?.slot;
+
+        require!(
+            ctx.accounts.result_account.request_id == request_metadata.request_id,
+            ErrorCode::InvalidRequestId
+        );
 
         move_lamports(
             &request_metadata.to_account_info(),
@@ -194,7 +187,6 @@ pub mod sonar {
         )?;
 
         request_metadata.status = RequestStatus::Refunded;
-        request_metadata.completed_at = Some(current_slot);
 
         Ok(())
     }
@@ -237,14 +229,16 @@ pub struct Callback<'info> {
         mut,
         seeds = [b"request", request_metadata.request_id.as_ref()],
         bump = request_metadata.bump,
-        has_one = result_account @ ErrorCode::InvalidRequestId,
+        has_one = payer @ ErrorCode::RequestPayerMismatch,
         has_one = callback_program @ ErrorCode::CallbackProgramMismatch,
+        close = payer,
     )]
     pub request_metadata: Account<'info, RequestMetadata>,
     #[account(
         mut,
-        seeds = [b"result", request_metadata.request_id.as_ref()],
+        seeds = [b"result", result_account.request_id.as_ref()],
         bump = result_account.bump,
+        close = payer,
     )]
     pub result_account: Account<'info, ResultAccount>,
     #[account(
@@ -255,6 +249,8 @@ pub struct Callback<'info> {
     pub verifier_registry: Account<'info, VerifierRegistry>,
     #[account(mut)]
     pub prover: Signer<'info>,
+    #[account(mut)]
+    pub payer: SystemAccount<'info>,
     /// CHECK: Validated against request metadata via `has_one`.
     #[account(constraint = callback_program.executable @ ErrorCode::CallbackProgramNotExecutable)]
     pub callback_program: UncheckedAccount<'info>,
@@ -269,8 +265,16 @@ pub struct Refund<'info> {
         has_one = payer @ ErrorCode::RefundPayerMismatch,
         constraint = request_metadata.status == RequestStatus::Pending @ ErrorCode::RequestNotPending,
         constraint = Clock::get()?.slot > request_metadata.deadline @ ErrorCode::DeadlineNotReached,
+        close = payer,
     )]
     pub request_metadata: Account<'info, RequestMetadata>,
+    #[account(
+        mut,
+        seeds = [b"result", result_account.request_id.as_ref()],
+        bump = result_account.bump,
+        close = payer,
+    )]
+    pub result_account: Account<'info, ResultAccount>,
     #[account(mut)]
     pub payer: Signer<'info>,
 }
@@ -317,30 +321,25 @@ pub struct RequestMetadata {
     pub request_id: [u8; 32],
     pub payer: Pubkey,
     pub callback_program: Pubkey,
-    pub result_account: Pubkey,
     pub computation_id: [u8; 32],
     pub deadline: u64,
     pub fee: u64,
     pub status: RequestStatus,
-    pub completed_at: Option<u64>,
     pub bump: u8,
 }
 
 impl RequestMetadata {
-    pub const LEN: usize = 8 + 32 + 32 + 32 + 32 + 32 + 8 + 8 + 1 + 9 + 1;
+    pub const LEN: usize = 8 + 32 + 32 + 32 + 32 + 8 + 8 + 1 + 1;
 }
 
 #[account]
 pub struct ResultAccount {
     pub request_id: [u8; 32],
-    pub result: Vec<u8>,
-    pub is_set: bool,
-    pub written_at: Option<u64>,
     pub bump: u8,
 }
 
 impl ResultAccount {
-    pub const LEN: usize = 8 + 32 + 4 + MAX_RESULT_BYTES + 1 + 9 + 1;
+    pub const LEN: usize = 8 + 32 + 1;
 }
 
 // ---------------------------------------------------------------------------
@@ -478,6 +477,12 @@ fn parse_public_inputs<const N: usize>(public_inputs: &[Vec<u8>]) -> Result<[[u8
     Ok(parsed)
 }
 
+#[inline(never)]
+fn validate_result_size(result: &[u8]) -> Result<()> {
+    require!(result.len() <= MAX_RESULT_BYTES, ErrorCode::ResultTooLarge);
+    Ok(())
+}
+
 fn invoke_callback_program<'info>(
     callback_program: AccountInfo<'info>,
     request_metadata: AccountInfo<'info>,
@@ -569,8 +574,6 @@ pub enum ErrorCode {
     DeadlinePassed,
     #[msg("Request deadline has not been reached")]
     DeadlineNotReached,
-    #[msg("Request already completed")]
-    AlreadyCompleted,
     #[msg("Request is not pending")]
     RequestNotPending,
     #[msg("Proof verification failed")]
@@ -585,6 +588,8 @@ pub enum ErrorCode {
     CallbackInvokeFailed,
     #[msg("Insufficient fee")]
     InsufficientFee,
+    #[msg("Callback close target does not match the original payer")]
+    RequestPayerMismatch,
     #[msg("Refund caller does not match the original payer")]
     RefundPayerMismatch,
     #[msg("No verifier is registered for this computation ID")]
@@ -624,6 +629,17 @@ mod tests {
     fn parse_public_inputs_rejects_wrong_row_width() {
         let err = parse_public_inputs::<1>(&[vec![7u8; 31]]).unwrap_err();
         assert_eq!(err, error!(ErrorCode::InvalidPublicInputSize));
+    }
+
+    #[test]
+    fn validate_result_size_accepts_maximum_payload() {
+        validate_result_size(&vec![0u8; MAX_RESULT_BYTES]).unwrap();
+    }
+
+    #[test]
+    fn validate_result_size_rejects_oversized_payload() {
+        let err = validate_result_size(&vec![0u8; MAX_RESULT_BYTES + 1]).unwrap_err();
+        assert_eq!(err, error!(ErrorCode::ResultTooLarge));
     }
 
     #[test]

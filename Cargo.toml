@@ -95,6 +95,9 @@ mockall    = "0.13"
 [profile.release]
 overflow-checks = true
 
+[features]
+groth16-cuda = ["sonar-prover/groth16-cuda"]
+
 [dev-dependencies]
 anchor-lang = { workspace = true }
 base64 = "0.22"

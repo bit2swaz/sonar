@@ -321,7 +321,7 @@ metrics_port = 9090
         assert_eq!(cfg.network.chain_id, "devnet");
         assert_eq!(cfg.indexer.http_port, 8080);
         assert_eq!(cfg.coordinator.indexer_url, "http://localhost:8080");
-        assert!(cfg.prover.mock_prover);
+        assert!(!cfg.prover.mock_prover);
 
         for var in &[
             "SOLANA_RPC_URL",

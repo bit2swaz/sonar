@@ -184,13 +184,15 @@ pub fn build_callback_instruction_data(
 /// 1. `result_account`   — mutable, not signer (PDA)
 /// 2. `verifier_registry` — read-only, not signer (PDA)
 /// 3. `prover`            — mutable, signer (coordinator keypair)
-/// 4. `callback_program`  — not mutable, not signer
+/// 4. `payer`             — mutable, not signer (original request payer)
+/// 5. `callback_program`  — not mutable, not signer
 #[allow(clippy::too_many_arguments)]
 pub fn build_callback_instruction(
     program_id: Pubkey,
     request_id: &[u8; 32],
     computation_id: &[u8; 32],
     prover_pubkey: Pubkey,
+    payer_pubkey: Pubkey,
     callback_program: Pubkey,
     proof: &[u8],
     public_inputs: &[Vec<u8>],
@@ -208,6 +210,7 @@ pub fn build_callback_instruction(
         AccountMeta::new(result_account_pda, false),
         AccountMeta::new_readonly(verifier_registry_pda, false),
         AccountMeta::new(prover_pubkey, true),
+        AccountMeta::new(payer_pubkey, false),
         AccountMeta::new_readonly(callback_program, false),
     ];
 
@@ -396,6 +399,7 @@ async fn process_response(
     let flattened_public_inputs_len = payload.flattened_public_inputs.len();
 
     let callback_program = Pubkey::new_from_array(meta.callback_program);
+    let payer = Pubkey::new_from_array(meta.payer);
 
     // Build instruction with prover-provided public inputs.
     let (ix, _, _) = build_callback_instruction(
@@ -403,6 +407,7 @@ async fn process_response(
         &response.request_id,
         &meta.computation_id,
         keypair.pubkey(),
+        payer,
         callback_program,
         &payload.proof,
         &payload.public_inputs,
@@ -566,11 +571,12 @@ mod tests {
     // --- build_callback_instruction ---
 
     #[test]
-    fn instruction_has_four_accounts() {
+    fn instruction_has_six_accounts() {
         let program_id = Pubkey::new_unique();
         let request_id = [0u8; 32];
         let computation_id = [1u8; 32];
         let prover = Pubkey::new_unique();
+        let payer = Pubkey::new_unique();
         let cb_prog = Pubkey::new_unique();
 
         let (ix, _, _) = build_callback_instruction(
@@ -578,22 +584,25 @@ mod tests {
             &request_id,
             &computation_id,
             prover,
+            payer,
             cb_prog,
             &[],
             &[],
             &[],
         );
 
-        assert_eq!(ix.accounts.len(), 5);
+        assert_eq!(ix.accounts.len(), 6);
         // Account 2 (verifier registry) must be read-only and not signer.
         assert!(!ix.accounts[2].is_writable && !ix.accounts[2].is_signer);
         // Account 3 (prover) must be a signer.
         assert!(ix.accounts[3].is_signer);
+        // Account 4 (payer) must be writable and not a signer.
+        assert!(ix.accounts[4].is_writable && !ix.accounts[4].is_signer);
         // Accounts 0 and 1 must be mutable but not signers.
         assert!(ix.accounts[0].is_writable && !ix.accounts[0].is_signer);
         assert!(ix.accounts[1].is_writable && !ix.accounts[1].is_signer);
-        // Account 4 (callback_program) must be read-only.
-        assert!(!ix.accounts[4].is_writable && !ix.accounts[4].is_signer);
+        // Account 5 (callback_program) must be read-only.
+        assert!(!ix.accounts[5].is_writable && !ix.accounts[5].is_signer);
     }
 
     #[test]
@@ -602,6 +611,7 @@ mod tests {
         let request_id = [7u8; 32];
         let computation_id = [8u8; 32];
         let prover = Pubkey::new_unique();
+        let payer = Pubkey::new_unique();
         let cb_prog = Pubkey::new_unique();
 
         let (ix, req_pda, res_pda) = build_callback_instruction(
@@ -609,6 +619,7 @@ mod tests {
             &request_id,
             &computation_id,
             prover,
+            payer,
             cb_prog,
             &[],
             &[],

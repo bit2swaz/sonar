@@ -1,10 +1,10 @@
 /**
  * Phase 2.3 — Full TDD Integration Test Suite
  *
- * 17 tests covering all instruction paths of the Sonar ZK-coprocessor program:
+ * 24 tests covering all instruction paths of the Sonar ZK-coprocessor program:
  *   - ACCESS CONTROL  (3)
  *   - REQUEST FLOW    (3)
- *   - CALLBACK FLOW   (5)
+ *   - CALLBACK FLOW   (9)
  *   - REFUND FLOW     (2)
  *   - EDGE CASES      (4)
  *
@@ -91,8 +91,8 @@ const PUBLIC_INPUTS: Buffer[] = [
   Buffer.from([25,178,1,208,219,169,222,123,113,202,165,77,183,98,103,237,187,93,178,95,169,156,38,100,125,218,104,94,104,119,13,21]),
 ];
 
-const SONAR_PROGRAM_ID = new PublicKey("EE2sQ2VRa1hY3qjPQ1PEwuPZX6dGwTZwHMCumWrGn3sV");
-const ECHO_CALLBACK_ID = new PublicKey("3RBU9G6Mws9nS8bQPg2cVRbS2v7CgsjAvv2MwmTcmbyA");
+const SONAR_PROGRAM_ID = new PublicKey("Gf7RSZYmfNJ5kv2AJvcv5rjCANP6ePExJR19D91MECLY");
+const ECHO_CALLBACK_ID = new PublicKey("J7jsJVQz6xbWFhyxRbzk7nH5ALhStztUNR1nPupnyjxS");
 
 type DemoVerifyingKeyFixture = {
   vkAlphaG1: number[];
@@ -265,12 +265,14 @@ function buildBankrunRequestInstruction(
 
 function buildBankrunRefundInstruction(
   payer: PublicKey,
-  requestMetadata: PublicKey
+  requestMetadata: PublicKey,
+  resultAccount: PublicKey
 ): TransactionInstruction {
   return new TransactionInstruction({
     programId: SONAR_PROGRAM_ID,
     keys: [
       { pubkey: requestMetadata, isSigner: false, isWritable: true },
+      { pubkey: resultAccount, isSigner: false, isWritable: true },
       { pubkey: payer, isSigner: true, isWritable: true },
     ],
     data: SONAR_INSTRUCTION_CODER.encode("refund", {}),
@@ -342,9 +344,33 @@ async function fetchBankrunRequestMetadata(
     Buffer.from(account!.data)
   ) as {
     status: object;
-    completedAt?: anchor.BN | null;
-    completed_at?: anchor.BN | null;
   };
+}
+
+async function assertProviderAccountClosed(
+  connection: anchor.web3.Connection,
+  publicKey: PublicKey,
+  label: string
+): Promise<void> {
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    const accountInfo = await connection.getAccountInfo(publicKey, "confirmed");
+    if (accountInfo === null) {
+      return;
+    }
+    await sleep(200);
+  }
+
+  const accountInfo = await connection.getAccountInfo(publicKey, "confirmed");
+  assert.isNull(accountInfo, `${label} should be closed`);
+}
+
+async function assertBankrunAccountClosed(
+  context: ProgramTestContext,
+  publicKey: PublicKey,
+  label: string
+): Promise<void> {
+  const account = await context.banksClient.getAccount(publicKey);
+  assert.isNull(account, `${label} should be closed`);
 }
 
 // ---------------------------------------------------------------------------
@@ -491,7 +517,7 @@ describe("Sonar ZK Coprocessor — Phase 2.3 Integration Tests", () => {
       await expectError(async () => {
         await program.methods
           .refund()
-          .accounts({ requestMetadata: reqPda, payer: thief.publicKey })
+          .accounts({ requestMetadata: reqPda, resultAccount: resPda, payer: thief.publicKey })
           .signers([thief])
           .rpc();
       }, "RefundPayerMismatch");
@@ -550,7 +576,6 @@ describe("Sonar ZK Coprocessor — Phase 2.3 Integration Tests", () => {
       assert.deepEqual(Array.from(meta.requestId as number[]), Array.from(rid), "request_id");
       assert.ok((meta.payer as PublicKey).equals(provider.wallet.publicKey), "payer");
       assert.ok((meta.callbackProgram as PublicKey).equals(echoCallbackId), "callback_program");
-      assert.ok((meta.resultAccount as PublicKey).equals(resPda), "result_account");
       assert.deepEqual(Array.from(meta.computationId as number[]), Array.from(DEMO_COMPUTATION_ID), "computation_id");
       assert.ok((meta.fee as anchor.BN).eq(new anchor.BN(fee)), "fee");
       assert.ok("pending" in (meta.status as object), "status=Pending");
@@ -601,7 +626,7 @@ describe("Sonar ZK Coprocessor — Phase 2.3 Integration Tests", () => {
       await ensureDemoVerifierRegisteredOrSkip(this);
     });
 
-    it("callback with valid proof writes result and marks request Completed", async () => {
+    it("callback with valid proof closes request state after invoking the consumer callback", async () => {
       const rid = randomId();
       const [reqPda] = requestPDA(sonarProgramId, rid);
       const [resPda] = resultPDA(sonarProgramId, rid);
@@ -615,16 +640,12 @@ describe("Sonar ZK Coprocessor — Phase 2.3 Integration Tests", () => {
 
       await program.methods
         .callback({ proof: VALID_PROOF, publicInputs: PUBLIC_INPUTS, result: resultPayload })
-        .accounts({ requestMetadata: reqPda, resultAccount: resPda, verifierRegistry: demoVerifierRegistry, prover: provider.wallet.publicKey, callbackProgram: echoCallbackId })
+        .accounts({ requestMetadata: reqPda, resultAccount: resPda, verifierRegistry: demoVerifierRegistry, prover: provider.wallet.publicKey, payer: provider.wallet.publicKey, callbackProgram: echoCallbackId })
         .remainingAccounts([])
         .rpc();
 
-      const meta = await program.account.requestMetadata.fetch(reqPda);
-      assert.ok("completed" in (meta.status as object), "status=Completed");
-
-      const res = await program.account.resultAccount.fetch(resPda);
-      assert.ok(res.isSet as boolean, "result_account.is_set");
-      assert.deepEqual(Array.from(res.result as number[]), Array.from(resultPayload), "result payload");
+      await assertProviderAccountClosed(provider.connection, reqPda, "request metadata PDA");
+      await assertProviderAccountClosed(provider.connection, resPda, "result PDA");
     });
 
     it("Rejects callback with cryptographically invalid proof", async () => {
@@ -644,7 +665,7 @@ describe("Sonar ZK Coprocessor — Phase 2.3 Integration Tests", () => {
       await expectError(async () => {
         await program.methods
           .callback({ proof: badProof, publicInputs: PUBLIC_INPUTS, result: Buffer.alloc(0) })
-          .accounts({ requestMetadata: reqPda, resultAccount: resPda, verifierRegistry: demoVerifierRegistry, prover: provider.wallet.publicKey, callbackProgram: echoCallbackId })
+          .accounts({ requestMetadata: reqPda, resultAccount: resPda, verifierRegistry: demoVerifierRegistry, prover: provider.wallet.publicKey, payer: provider.wallet.publicKey, callbackProgram: echoCallbackId })
           .remainingAccounts([])
           .rpc();
       }, "ProofVerificationFailed");
@@ -667,10 +688,73 @@ describe("Sonar ZK Coprocessor — Phase 2.3 Integration Tests", () => {
       await expectError(async () => {
         await program.methods
           .callback({ proof: VALID_PROOF, publicInputs: badPublicInputs, result: Buffer.alloc(0) })
-          .accounts({ requestMetadata: reqPda, resultAccount: resPda, verifierRegistry: demoVerifierRegistry, prover: provider.wallet.publicKey, callbackProgram: echoCallbackId })
+          .accounts({ requestMetadata: reqPda, resultAccount: resPda, verifierRegistry: demoVerifierRegistry, prover: provider.wallet.publicKey, payer: provider.wallet.publicKey, callbackProgram: echoCallbackId })
           .remainingAccounts([])
           .rpc();
       }, "ProofVerificationFailed");
+    });
+
+    it("rejects callback with malformed Groth16 proof length", async () => {
+      const rid = randomId();
+      const [reqPda] = requestPDA(sonarProgramId, rid);
+      const [resPda] = resultPDA(sonarProgramId, rid);
+      const slot = await provider.connection.getSlot();
+
+      await program.methods
+        .request({ requestId: Array.from(rid), computationId: Array.from(DEMO_COMPUTATION_ID), inputs: Buffer.alloc(0), deadline: new anchor.BN(slot + 5000), fee: new anchor.BN(100_000) })
+        .accounts({ payer: provider.wallet.publicKey, callbackProgram: echoCallbackId, requestMetadata: reqPda, resultAccount: resPda, systemProgram: SystemProgram.programId })
+        .rpc();
+
+      await expectError(async () => {
+        await program.methods
+          .callback({ proof: VALID_PROOF.subarray(0, VALID_PROOF.length - 1), publicInputs: PUBLIC_INPUTS, result: Buffer.alloc(0) })
+          .accounts({ requestMetadata: reqPda, resultAccount: resPda, verifierRegistry: demoVerifierRegistry, prover: provider.wallet.publicKey, payer: provider.wallet.publicKey, callbackProgram: echoCallbackId })
+          .remainingAccounts([])
+          .rpc();
+      }, "InvalidProofLength");
+    });
+
+    it("rejects callback when public input count does not match the verifier", async () => {
+      const rid = randomId();
+      const [reqPda] = requestPDA(sonarProgramId, rid);
+      const [resPda] = resultPDA(sonarProgramId, rid);
+      const slot = await provider.connection.getSlot();
+
+      await program.methods
+        .request({ requestId: Array.from(rid), computationId: Array.from(DEMO_COMPUTATION_ID), inputs: Buffer.alloc(0), deadline: new anchor.BN(slot + 5000), fee: new anchor.BN(100_000) })
+        .accounts({ payer: provider.wallet.publicKey, callbackProgram: echoCallbackId, requestMetadata: reqPda, resultAccount: resPda, systemProgram: SystemProgram.programId })
+        .rpc();
+
+      await expectError(async () => {
+        await program.methods
+          .callback({ proof: VALID_PROOF, publicInputs: PUBLIC_INPUTS.slice(0, PUBLIC_INPUTS.length - 1), result: Buffer.alloc(0) })
+          .accounts({ requestMetadata: reqPda, resultAccount: resPda, verifierRegistry: demoVerifierRegistry, prover: provider.wallet.publicKey, payer: provider.wallet.publicKey, callbackProgram: echoCallbackId })
+          .remainingAccounts([])
+          .rpc();
+      }, "InvalidPublicInputsLength");
+    });
+
+    it("rejects callback when a public input is not 32 bytes", async () => {
+      const rid = randomId();
+      const [reqPda] = requestPDA(sonarProgramId, rid);
+      const [resPda] = resultPDA(sonarProgramId, rid);
+      const slot = await provider.connection.getSlot();
+
+      await program.methods
+        .request({ requestId: Array.from(rid), computationId: Array.from(DEMO_COMPUTATION_ID), inputs: Buffer.alloc(0), deadline: new anchor.BN(slot + 5000), fee: new anchor.BN(100_000) })
+        .accounts({ payer: provider.wallet.publicKey, callbackProgram: echoCallbackId, requestMetadata: reqPda, resultAccount: resPda, systemProgram: SystemProgram.programId })
+        .rpc();
+
+      const malformedInputs = PUBLIC_INPUTS.map((value) => Buffer.from(value));
+      malformedInputs[0] = Buffer.alloc(31, 0x11);
+
+      await expectError(async () => {
+        await program.methods
+          .callback({ proof: VALID_PROOF, publicInputs: malformedInputs, result: Buffer.alloc(0) })
+          .accounts({ requestMetadata: reqPda, resultAccount: resPda, verifierRegistry: demoVerifierRegistry, prover: provider.wallet.publicKey, payer: provider.wallet.publicKey, callbackProgram: echoCallbackId })
+          .remainingAccounts([])
+          .rpc();
+      }, "InvalidPublicInputSize");
     });
 
     it("callback with mismatched result_account fails with InvalidRequestId", async () => {
@@ -692,7 +776,7 @@ describe("Sonar ZK Coprocessor — Phase 2.3 Integration Tests", () => {
       await expectError(async () => {
         await program.methods
           .callback({ proof: VALID_PROOF, publicInputs: PUBLIC_INPUTS, result: Buffer.alloc(0) })
-          .accounts({ requestMetadata: reqA, resultAccount: resB, verifierRegistry: demoVerifierRegistry, prover: provider.wallet.publicKey, callbackProgram: echoCallbackId })
+          .accounts({ requestMetadata: reqA, resultAccount: resB, verifierRegistry: demoVerifierRegistry, prover: provider.wallet.publicKey, payer: provider.wallet.publicKey, callbackProgram: echoCallbackId })
           .remainingAccounts([])
           .rpc();
       }, "InvalidRequestId");
@@ -715,7 +799,7 @@ describe("Sonar ZK Coprocessor — Phase 2.3 Integration Tests", () => {
       await expectError(async () => {
         await program.methods
           .callback({ proof: VALID_PROOF, publicInputs: PUBLIC_INPUTS, result: Buffer.alloc(0) })
-          .accounts({ requestMetadata: reqPda, resultAccount: resPda, verifierRegistry: demoVerifierRegistry, prover: provider.wallet.publicKey, callbackProgram: echoCallbackId })
+          .accounts({ requestMetadata: reqPda, resultAccount: resPda, verifierRegistry: demoVerifierRegistry, prover: provider.wallet.publicKey, payer: provider.wallet.publicKey, callbackProgram: echoCallbackId })
           .remainingAccounts([])
           .rpc();
       }, "DeadlinePassed");
@@ -737,12 +821,12 @@ describe("Sonar ZK Coprocessor — Phase 2.3 Integration Tests", () => {
 
       await program.methods
         .callback({ proof: VALID_PROOF, publicInputs: PUBLIC_INPUTS, result: Buffer.alloc(0) })
-        .accounts({ requestMetadata: reqPda, resultAccount: resPda, verifierRegistry: demoVerifierRegistry, prover: provider.wallet.publicKey, callbackProgram: echoCallbackId })
+        .accounts({ requestMetadata: reqPda, resultAccount: resPda, verifierRegistry: demoVerifierRegistry, prover: provider.wallet.publicKey, payer: provider.wallet.publicKey, callbackProgram: echoCallbackId })
         .remainingAccounts([])
         .rpc();
 
       const after = await provider.connection.getBalance(provider.wallet.publicKey);
-      assert.isAbove(after, before, "prover balance should increase after receiving fee");
+      assert.isAbove(after - before, fee, "payer/prover should receive the fee plus reclaimed rent");
     });
   });
 
@@ -765,7 +849,7 @@ describe("Sonar ZK Coprocessor — Phase 2.3 Integration Tests", () => {
       await expectError(async () => {
         await program.methods
           .refund()
-          .accounts({ requestMetadata: reqPda, payer: provider.wallet.publicKey })
+          .accounts({ requestMetadata: reqPda, resultAccount: resPda, payer: provider.wallet.publicKey })
           .rpc();
       }, "DeadlineNotReached");
     });
@@ -789,14 +873,13 @@ describe("Sonar ZK Coprocessor — Phase 2.3 Integration Tests", () => {
 
       await program.methods
         .refund()
-        .accounts({ requestMetadata: reqPda, payer: provider.wallet.publicKey })
+        .accounts({ requestMetadata: reqPda, resultAccount: resPda, payer: provider.wallet.publicKey })
         .rpc();
 
       const after = await provider.connection.getBalance(provider.wallet.publicKey);
-      assert.isAbove(after - before, fee - 50_000, "payer should receive back at least fee - tx_cost");
-
-      const meta = await program.account.requestMetadata.fetch(reqPda);
-      assert.ok("refunded" in (meta.status as object), "status=Refunded");
+      assert.isAbove(after - before, fee, "payer should receive the fee plus reclaimed rent");
+      await assertProviderAccountClosed(provider.connection, reqPda, "request metadata PDA");
+      await assertProviderAccountClosed(provider.connection, resPda, "result PDA");
     });
   });
 
@@ -805,32 +888,30 @@ describe("Sonar ZK Coprocessor — Phase 2.3 Integration Tests", () => {
   // ==========================================================================
 
   describe("Edge Cases", () => {
-    it("second callback on completed request fails with RequestNotPending", async function () {
+    it("callback rejects a forged payer close target", async function () {
       await ensureDemoVerifierRegisteredOrSkip(this);
 
       const rid = randomId();
       const [reqPda] = requestPDA(sonarProgramId, rid);
       const [resPda] = resultPDA(sonarProgramId, rid);
       const slot = await provider.connection.getSlot();
+      const thief = Keypair.generate();
 
       await program.methods
         .request({ requestId: Array.from(rid), computationId: Array.from(DEMO_COMPUTATION_ID), inputs: Buffer.alloc(0), deadline: new anchor.BN(slot + 5000), fee: new anchor.BN(1_000_000) })
         .accounts({ payer: provider.wallet.publicKey, callbackProgram: echoCallbackId, requestMetadata: reqPda, resultAccount: resPda, systemProgram: SystemProgram.programId })
         .rpc();
 
-      await program.methods
-        .callback({ proof: VALID_PROOF, publicInputs: PUBLIC_INPUTS, result: Buffer.from([0x01]) })
-        .accounts({ requestMetadata: reqPda, resultAccount: resPda, verifierRegistry: demoVerifierRegistry, prover: provider.wallet.publicKey, callbackProgram: echoCallbackId })
-        .remainingAccounts([])
-        .rpc();
+      const airdrop = await provider.connection.requestAirdrop(thief.publicKey, LAMPORTS_PER_SOL);
+      await provider.connection.confirmTransaction(airdrop, "confirmed");
 
       await expectError(async () => {
         await program.methods
           .callback({ proof: VALID_PROOF, publicInputs: PUBLIC_INPUTS, result: Buffer.from([0x02]) })
-          .accounts({ requestMetadata: reqPda, resultAccount: resPda, verifierRegistry: demoVerifierRegistry, prover: provider.wallet.publicKey, callbackProgram: echoCallbackId })
+          .accounts({ requestMetadata: reqPda, resultAccount: resPda, verifierRegistry: demoVerifierRegistry, prover: provider.wallet.publicKey, payer: thief.publicKey, callbackProgram: echoCallbackId })
           .remainingAccounts([])
           .rpc();
-      }, "RequestNotPending");
+      }, "RequestPayerMismatch");
     });
 
     it("callback with wrong result PDA fails with InvalidRequestId", async function () {
@@ -854,7 +935,7 @@ describe("Sonar ZK Coprocessor — Phase 2.3 Integration Tests", () => {
       await expectError(async () => {
         await program.methods
           .callback({ proof: VALID_PROOF, publicInputs: PUBLIC_INPUTS, result: Buffer.alloc(0) })
-          .accounts({ requestMetadata: reqX, resultAccount: resY, verifierRegistry: demoVerifierRegistry, prover: provider.wallet.publicKey, callbackProgram: echoCallbackId })
+          .accounts({ requestMetadata: reqX, resultAccount: resY, verifierRegistry: demoVerifierRegistry, prover: provider.wallet.publicKey, payer: provider.wallet.publicKey, callbackProgram: echoCallbackId })
           .remainingAccounts([])
           .rpc();
       }, "InvalidRequestId");
@@ -939,7 +1020,7 @@ describe("Sonar refund deadline boundary tests (Bankrun)", () => {
 
     const refundResult = await tryProcessBankrunTransaction(
       context,
-      [buildBankrunRefundInstruction(payer.publicKey, requestMetadata)],
+      [buildBankrunRefundInstruction(payer.publicKey, requestMetadata, resultAccount)],
       [payer]
     );
     expectBankrunError(refundResult, "DeadlineNotReached");
@@ -982,7 +1063,13 @@ describe("Sonar refund deadline boundary tests (Bankrun)", () => {
     );
 
     const balanceBeforeRefund = await context.banksClient.getBalance(payer.publicKey);
-    const refundInstruction = buildBankrunRefundInstruction(payer.publicKey, requestMetadata);
+    const requestMetadataBalance = await context.banksClient.getBalance(requestMetadata);
+    const resultAccountBalance = await context.banksClient.getBalance(resultAccount);
+    const refundInstruction = buildBankrunRefundInstruction(
+      payer.publicKey,
+      requestMetadata,
+      resultAccount
+    );
     const refundTransaction = await buildBankrunTransaction(context, [refundInstruction], [payer]);
     const refundFee = await context.banksClient.getFeeForMessage(refundTransaction.compileMessage());
     assert.isNotNull(refundFee, "refund transaction fee should be available");
@@ -992,11 +1079,10 @@ describe("Sonar refund deadline boundary tests (Bankrun)", () => {
     const balanceAfterRefund = await context.banksClient.getBalance(payer.publicKey);
     assert.strictEqual(
       balanceAfterRefund - balanceBeforeRefund,
-      fee - refundFee!,
-      "payer should receive the locked lamports back minus the refund transaction fee"
+      requestMetadataBalance + resultAccountBalance - refundFee!,
+      "payer should receive the full PDA lamports minus the refund transaction fee"
     );
-
-    const metadata = await fetchBankrunRequestMetadata(context, requestMetadata);
-    assert.isTrue(hasStatusVariant(metadata.status, "Refunded"), "status should become Refunded");
+    await assertBankrunAccountClosed(context, requestMetadata, "request metadata PDA");
+    await assertBankrunAccountClosed(context, resultAccount, "result PDA");
   });
 });

@@ -61,13 +61,11 @@ pub struct OnChainRequestMetadata {
     pub request_id: [u8; 32],
     pub payer: [u8; 32],
     pub callback_program: [u8; 32],
-    pub result_account: [u8; 32],
     pub computation_id: [u8; 32],
     pub deadline: u64,
     pub fee: u64,
     /// 0 = Pending, 1 = Completed, 2 = Refunded
     pub status: u8,
-    pub completed_at: Option<u64>,
     pub bump: u8,
 }
 
@@ -170,19 +168,16 @@ fn hex_nibble(c: u8) -> Option<u8> {
 /// [u8; 32]       request_id
 /// [u8; 32]       payer
 /// [u8; 32]       callback_program
-/// [u8; 32]       result_account
 /// [u8; 32]       computation_id
 /// u64 LE         deadline
 /// u64 LE         fee
 /// u8             status  (0=Pending, 1=Completed, 2=Refunded)
-/// u8             completed_at tag (0=None, 1=Some)
-/// u64 LE         completed_at value (only present when tag=1)
 /// u8             bump
 /// ```
 #[allow(unused_assignments)] // `c` is incremented by the take! macro even after the last field
 pub fn decode_request_metadata(data: &[u8]) -> Option<OnChainRequestMetadata> {
-    // Minimum byte count (tag=0 path): 8 + 32*5 + 8 + 8 + 1 + 1 + 1 = 179
-    if data.len() < 179 {
+    // Minimum byte count: 8 + 32*4 + 8 + 8 + 1 + 1 = 154
+    if data.len() < 154 {
         return None;
     }
     // Skip 8-byte Anchor discriminator.
@@ -203,30 +198,20 @@ pub fn decode_request_metadata(data: &[u8]) -> Option<OnChainRequestMetadata> {
     let request_id: [u8; 32] = take!(32).try_into().ok()?;
     let payer: [u8; 32] = take!(32).try_into().ok()?;
     let callback_program: [u8; 32] = take!(32).try_into().ok()?;
-    let result_account: [u8; 32] = take!(32).try_into().ok()?;
     let computation_id: [u8; 32] = take!(32).try_into().ok()?;
     let deadline = u64::from_le_bytes(take!(8).try_into().ok()?);
     let fee = u64::from_le_bytes(take!(8).try_into().ok()?);
     let status = take!(1)[0];
-    let tag = take!(1)[0];
-    let completed_at = if tag == 1 {
-        let v = u64::from_le_bytes(take!(8).try_into().ok()?);
-        Some(v)
-    } else {
-        None
-    };
     let bump = take!(1)[0];
 
     Some(OnChainRequestMetadata {
         request_id,
         payer,
         callback_program,
-        result_account,
         computation_id,
         deadline,
         fee,
         status,
-        completed_at,
         bump,
     })
 }
@@ -238,6 +223,12 @@ pub fn decode_request_metadata(data: &[u8]) -> Option<OnChainRequestMetadata> {
 /// Build a [`ProverJob`] from a decoded `RequestMetadata` and pre-fetched
 /// prover inputs.
 pub fn build_prover_job(meta: &OnChainRequestMetadata, inputs: Vec<u8>) -> ProverJob {
+    let program_id = Pubkey::from_str(PROGRAM_ID_STR).expect("valid Sonar program ID constant");
+    let (result_account, _) = Pubkey::find_program_address(
+        &[b"result", meta.request_id.as_ref()],
+        &program_id,
+    );
+
     ProverJob {
         request_id: meta.request_id,
         computation_id: meta.computation_id,
@@ -245,7 +236,7 @@ pub fn build_prover_job(meta: &OnChainRequestMetadata, inputs: Vec<u8>) -> Prove
         deadline: meta.deadline,
         fee: meta.fee,
         callback_program: CommonPubkey::new(meta.callback_program),
-        result_account: CommonPubkey::new(meta.result_account),
+        result_account: CommonPubkey::new(result_account.to_bytes()),
     }
 }
 
@@ -347,13 +338,30 @@ pub async fn run_listener(
 
     info!("Listener started — watching {PROGRAM_ID_STR}");
 
+    let polling_enabled = !std::env::var("SONAR_DISABLE_REQUEST_POLLING")
+        .map(|value| {
+            matches!(
+                value.to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+        .unwrap_or(false);
+
+    if polling_enabled {
+        info!("request polling fallback enabled");
+    } else {
+        info!("request polling fallback disabled");
+    }
+
     // Polling fallback: every 2 s we call `getSignaturesForAddress` +
     // Polling fallback: every 2 s we call `getProgramAccounts` for the Sonar
     // program to discover any pending `RequestMetadata` accounts.  This
     // compensates for the Agave 3.x / SDK 2.x WebSocket subscription
     // compatibility issue where `logsSubscribe` silently delivers no events.
     let mut polling_ticker = tokio::time::interval(Duration::from_secs(2));
-    polling_ticker.tick().await; // consume the initial tick (fires immediately)
+    if polling_enabled {
+        polling_ticker.tick().await; // consume the initial tick (fires immediately)
+    }
     let mut ws_stream_open = true;
 
     loop {
@@ -386,7 +394,13 @@ pub async fn run_listener(
                     }
                 }
             }
-            _ = polling_ticker.tick() => {
+            _ = async {
+                if polling_enabled {
+                    polling_ticker.tick().await;
+                } else {
+                    std::future::pending::<()>().await;
+                }
+            } => {
                 if let Err(e) = poll_pending_requests(
                     &config.rpc_url,
                     &program_id,
@@ -961,8 +975,6 @@ mod tests {
         data.extend_from_slice(&[2u8; 32]);
         // callback_program
         data.extend_from_slice(&[3u8; 32]);
-        // result_account
-        data.extend_from_slice(&[4u8; 32]);
         // computation_id
         data.extend_from_slice(&[5u8; 32]);
         // deadline: 9999 as u64 LE
@@ -970,8 +982,6 @@ mod tests {
         // fee: 123 as u64 LE
         data.extend_from_slice(&123u64.to_le_bytes());
         // status: 0 (Pending)
-        data.push(0);
-        // completed_at: None (tag = 0)
         data.push(0);
         // bump: 255
         data.push(255);
@@ -983,28 +993,13 @@ mod tests {
         let data = make_metadata_bytes();
         let meta = decode_request_metadata(&data).expect("should decode");
         assert_eq!(meta.request_id, [1u8; 32]);
+        assert_eq!(meta.payer, [2u8; 32]);
         assert_eq!(meta.callback_program, [3u8; 32]);
-        assert_eq!(meta.result_account, [4u8; 32]);
         assert_eq!(meta.computation_id, [5u8; 32]);
         assert_eq!(meta.deadline, 9999);
         assert_eq!(meta.fee, 123);
         assert_eq!(meta.status, 0);
-        assert!(meta.completed_at.is_none());
         assert_eq!(meta.bump, 255);
-    }
-
-    #[test]
-    fn decode_metadata_with_completed_at() {
-        let mut data = make_metadata_bytes();
-        // Patch: change completed_at tag to 1 and append the value.
-        // completed_at tag is at offset 8 + 32*5 + 8 + 8 + 1 = 185
-        data[185] = 1;
-        // Insert 8 bytes for the slot value (77) after tag.
-        let tail = data.split_off(186);
-        data.extend_from_slice(&77u64.to_le_bytes());
-        data.extend(tail);
-        let meta = decode_request_metadata(&data).expect("should decode");
-        assert_eq!(meta.completed_at, Some(77));
     }
 
     #[test]
@@ -1024,7 +1019,10 @@ mod tests {
         assert_eq!(job.deadline, 9999);
         assert_eq!(job.fee, 123);
         assert_eq!(*job.callback_program.as_bytes(), [3u8; 32]);
-        assert_eq!(*job.result_account.as_bytes(), [4u8; 32]);
+        let program_id = Pubkey::from_str(PROGRAM_ID_STR).unwrap();
+        let (expected_result_account, _) =
+            Pubkey::find_program_address(&[b"result", &[1u8; 32]], &program_id);
+        assert_eq!(*job.result_account.as_bytes(), expected_result_account.to_bytes());
         assert!(job.inputs.is_empty());
     }
 

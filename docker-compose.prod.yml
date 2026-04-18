@@ -40,11 +40,11 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     environment:
-      SONAR_CHAIN_ID: ${SONAR_CHAIN_ID:-mainnet}
-      SOLANA_RPC_URL: ${SOLANA_RPC_URL:-https://api.mainnet-beta.solana.com}
-      SOLANA_WS_URL: ${SOLANA_WS_URL:-wss://api.mainnet-beta.solana.com}
+      SONAR_CHAIN_ID: ${SONAR_CHAIN_ID:-devnet}
+      SOLANA_RPC_URL: ${SOLANA_RPC_URL:-https://solana-devnet.core.chainstack.com/51a4443c8b33222e5327f331e007ec91}
+      SOLANA_WS_URL: ${SOLANA_WS_URL:-wss://solana-devnet.core.chainstack.com/51a4443c8b33222e5327f331e007ec91}
       HELIUS_API_KEY: ${HELIUS_API_KEY:-}
-      HELIUS_RPC_URL: ${HELIUS_RPC_URL:-https://api.mainnet-beta.solana.com}
+      HELIUS_RPC_URL: ${HELIUS_RPC_URL:-https://solana-devnet.core.chainstack.com/51a4443c8b33222e5327f331e007ec91}
       DATABASE_URL: postgresql://${POSTGRES_USER:-sonar}:${POSTGRES_PASSWORD:-sonar}@postgres:5432/${POSTGRES_DB:-sonar}
       REDIS_URL: redis://redis:6379
       INDEXER_URL: ${INDEXER_URL:-http://host.docker.internal:8080}
@@ -70,11 +70,11 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      SONAR_CHAIN_ID: ${SONAR_CHAIN_ID:-mainnet}
-      SOLANA_RPC_URL: ${SOLANA_RPC_URL:-https://api.mainnet-beta.solana.com}
-      SOLANA_WS_URL: ${SOLANA_WS_URL:-wss://api.mainnet-beta.solana.com}
+      SONAR_CHAIN_ID: ${SONAR_CHAIN_ID:-devnet}
+      SOLANA_RPC_URL: ${SOLANA_RPC_URL:-https://solana-devnet.core.chainstack.com/51a4443c8b33222e5327f331e007ec91}
+      SOLANA_WS_URL: ${SOLANA_WS_URL:-wss://solana-devnet.core.chainstack.com/51a4443c8b33222e5327f331e007ec91}
       HELIUS_API_KEY: ${HELIUS_API_KEY:-}
-      HELIUS_RPC_URL: ${HELIUS_RPC_URL:-https://api.mainnet-beta.solana.com}
+      HELIUS_RPC_URL: ${HELIUS_RPC_URL:-https://solana-devnet.core.chainstack.com/51a4443c8b33222e5327f331e007ec91}
       DATABASE_URL: postgresql://${POSTGRES_USER:-sonar}:${POSTGRES_PASSWORD:-sonar}@postgres:5432/${POSTGRES_DB:-sonar}
       REDIS_URL: redis://redis:6379
       INDEXER_URL: ${INDEXER_URL:-http://host.docker.internal:8080}

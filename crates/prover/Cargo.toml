@@ -17,6 +17,8 @@ sonar-common = { workspace = true }
 bincode = "1.3"
 sha2 = "0.10"
 async-trait = "0.1"
+hex = "0.4"
+num-bigint = "0.4"
 
 [dev-dependencies]
 tempfile = "3"
@@ -24,9 +26,11 @@ proptest = "1"
 testcontainers = "0.27.2"
 tracing-subscriber = { workspace = true }
 criterion = { version = "0.5.1", features = ["html_reports"] }
+sp1-verifier = { version = "6.0.2", features = ["std"] }
 
 [features]
 mock = []
+groth16-cuda = ["sp1-sdk/groth16-cuda"]
 
 [[bench]]
 name = "prover_hot_paths"

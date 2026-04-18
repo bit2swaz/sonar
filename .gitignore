@@ -53,6 +53,7 @@ temp
 
 # benchmarks / criterion output 
 criterion/
+benchmarks-results.txt
 
 # coverage
 lcov.info

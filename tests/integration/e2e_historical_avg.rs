@@ -498,7 +498,7 @@ fn start_validator(paths: &TestPaths, ports: &PortLayout) -> Result<ChildGuard> 
 }
 
 fn echo_callback_program_id() -> Pubkey {
-    Pubkey::from_str("3RBU9G6Mws9nS8bQPg2cVRbS2v7CgsjAvv2MwmTcmbyA")
+    Pubkey::from_str("J7jsJVQz6xbWFhyxRbzk7nH5ALhStztUNR1nPupnyjxS")
         .expect("valid echo callback program id")
 }
 

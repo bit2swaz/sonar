@@ -34,8 +34,7 @@ cargo test --workspace -- --skip integration
 If you touch the Anchor program or consumer programs, also run:
 
 ```bash
-anchor build
-anchor test
+bash scripts/anchor-test.sh
 ```
 
 If you touch orchestration around the historical-average flow, also run:

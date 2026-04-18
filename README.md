@@ -70,8 +70,7 @@ flowchart LR
 ```bash
 npm install
 cargo test --workspace -- --skip integration
-anchor build
-anchor test
+bash scripts/anchor-test.sh
 ```
 
 For the full historical-average vertical slice:
@@ -156,6 +155,18 @@ scripts/local-ci.sh -W .github/workflows/ci.yml -j check
 
 If your environment requires authentication to pull the configured runner image, run `docker login` before starting local `act` runs.
 
+### Anchor validation
+
+Use the repo wrapper instead of invoking `anchor test` directly:
+
+```bash
+bash scripts/anchor-test.sh
+```
+
+That wrapper runs `anchor build`, syncs the `target/idl/sonar_program.json`
+alias that Anchor's log-stream path expects, and then executes
+`anchor test --skip-build`.
+
 ### Devnet deployment
 
 Use the deployment helper when you want a repeatable devnet release of the Anchor workspace:
@@ -189,7 +200,7 @@ cargo bench -p sonar-prover
 
 - Default local validation should rely on the fast unit and Anchor integration suites.
 - Expensive real SP1 Groth16 smoke tests are opt-in and are better suited to higher-memory or GPU-capable machines, or CI/nightly coverage.
-- A trailing `os error 2` after `anchor test` is currently a known teardown issue in this repo; when the suite reports all tests passing, treat the passing count as the signal until that runner issue is isolated.
+- Run `bash scripts/anchor-test.sh` for the Anchor suite; it handles the repo's `sonar` versus `sonar_program` IDL-name mismatch before invoking Anchor.
 
 ### Export verifier artifacts
 

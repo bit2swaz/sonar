@@ -150,28 +150,7 @@ jobs:
 
       - name: Run Anchor tests
         run: |
-          # Run the full Anchor test flow so the CLI performs its normal build+
-          # deploy sequence. `--skip-build` can leave the suite talking to a
-          # validator where the workspace programs were never deployed, which
-          # surfaces as "Attempt to load a program that does not exist" for
-          # every spec.
-          # Anchor CLI v0.32 has a known post-suite ENOENT during validator cleanup
-          # that causes a non-zero exit even when every test passed. We tolerate
-          # that specific cleanup quirk, but still fail if the suite reports any
-          # actual failing specs.
-          set +e
-          anchor test 2>&1 | tee /tmp/anchor_test_out.txt
-          if grep -Eq '(^|[[:space:]])[1-9][0-9]* failing' /tmp/anchor_test_out.txt; then
-            echo "ERROR: anchor test suite reported failing specs"
-            cat /tmp/anchor_test_out.txt
-            exit 1
-          fi
-          if ! grep -q "sonar integration checks passed" /tmp/anchor_test_out.txt; then
-            echo "ERROR: anchor test body did not produce expected success message"
-            cat /tmp/anchor_test_out.txt
-            exit 1
-          fi
-          echo "anchor test body passed (Anchor CLI cleanup exit code is ignored — known v0.32 ENOENT tooling quirk)"
+          SONAR_SKIP_ANCHOR_BUILD=1 bash scripts/anchor-test.sh
 
   e2e:
     name: End-to-End Historical Average

@@ -6,8 +6,9 @@
 //!
 //! 1. Subscribes to Solana WebSocket logs mentioning the Sonar program.
 //! 2. Detects the `sonar:request:` log pattern.
-//! 3. Derives the `RequestMetadata` PDA and fetches its account data.
-//! 4. Decodes the account, builds a [`ProverJob`], and pushes it to Redis.
+//! 3. Parses the structured inputs and callback-account metadata emitted by the request.
+//! 4. Derives the `RequestMetadata` PDA and fetches its account data.
+//! 5. Decodes the account, builds a [`ProverJob`], and pushes it to Redis.
 //!
 //! For **HistoricalAvg** requests the coordinator:
 //! - Parses the `sonar:inputs:` log to extract (pubkey, from_slot, to_slot).
@@ -29,7 +30,9 @@ use solana_client::{
 use solana_sdk::{commitment_config::CommitmentConfig, pubkey::Pubkey};
 use tracing::{debug, error, info, warn};
 
-use sonar_common::types::{ProverJob, Pubkey as CommonPubkey};
+use sonar_common::types::{
+    CallbackAccountMeta as CommonCallbackAccountMeta, ProverJob, Pubkey as CommonPubkey,
+};
 
 use crate::dispatcher;
 
@@ -46,8 +49,17 @@ const LOG_REQUEST_PREFIX: &str = "Program log: sonar:request:";
 /// Prefix emitted by `msg!("sonar:inputs:{}", hex_inputs)` in the program.
 const LOG_INPUTS_PREFIX: &str = "Program log: sonar:inputs:";
 
+/// Prefix emitted by `msg!("sonar:callback_accounts:{}", hex_accounts)`.
+const LOG_CALLBACK_ACCOUNTS_PREFIX: &str = "Program log: sonar:callback_accounts:";
+
 /// Byte length of historical-average inputs: pubkey[32] + from_slot[8] + to_slot[8].
 pub const HISTORICAL_AVG_INPUTS_LEN: usize = 48;
+
+/// Byte length of each encoded callback account record: pubkey[32] + writable[1].
+pub const CALLBACK_ACCOUNT_META_BYTES: usize = 33;
+
+/// Byte offset of `RequestMetadata.status` inside the full account buffer.
+pub const REQUEST_METADATA_STATUS_OFFSET: usize = 8 + 32 + 32 + 32 + 32 + 8 + 8;
 
 const HTTP_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -97,19 +109,42 @@ pub fn parse_request_id_from_logs(logs: &[String]) -> Option<[u8; 32]> {
 pub fn parse_inputs_from_logs(logs: &[String]) -> Option<Vec<u8>> {
     for line in logs {
         if let Some(hex) = line.strip_prefix(LOG_INPUTS_PREFIX) {
-            let hex = hex.trim();
-            if hex.len() % 2 != 0 {
-                return None;
-            }
-            let mut out = Vec::with_capacity(hex.len() / 2);
-            for chunk in hex.as_bytes().chunks_exact(2) {
-                let hi = hex_nibble(chunk[0])?;
-                let lo = hex_nibble(chunk[1])?;
-                out.push((hi << 4) | lo);
-            }
-            return Some(out);
+            return parse_hex_bytes(hex.trim());
         }
     }
+    None
+}
+
+/// Scan `logs` for a callback-account metadata line and decode it.
+pub fn parse_callback_accounts_from_logs(
+    logs: &[String],
+) -> Option<Vec<CommonCallbackAccountMeta>> {
+    for line in logs {
+        if let Some(hex) = line.strip_prefix(LOG_CALLBACK_ACCOUNTS_PREFIX) {
+            let raw = parse_hex_bytes(hex.trim())?;
+            if raw.len() % CALLBACK_ACCOUNT_META_BYTES != 0 {
+                return None;
+            }
+
+            let mut callback_accounts = Vec::with_capacity(raw.len() / CALLBACK_ACCOUNT_META_BYTES);
+            for chunk in raw.chunks_exact(CALLBACK_ACCOUNT_META_BYTES) {
+                let pubkey: [u8; 32] = chunk[..32].try_into().ok()?;
+                let is_writable = match chunk[32] {
+                    0 => false,
+                    1 => true,
+                    _ => return None,
+                };
+
+                callback_accounts.push(CommonCallbackAccountMeta {
+                    pubkey: CommonPubkey::new(pubkey),
+                    is_writable,
+                });
+            }
+
+            return Some(callback_accounts);
+        }
+    }
+
     None
 }
 
@@ -149,6 +184,22 @@ pub fn parse_hex32(s: &str) -> Option<[u8; 32]> {
         let lo = hex_nibble(chunk[1])?;
         out[i] = (hi << 4) | lo;
     }
+    Some(out)
+}
+
+fn parse_hex_bytes(s: &str) -> Option<Vec<u8>> {
+    let s = s.trim();
+    if s.len() % 2 != 0 {
+        return None;
+    }
+
+    let mut out = Vec::with_capacity(s.len() / 2);
+    for chunk in s.as_bytes().chunks_exact(2) {
+        let hi = hex_nibble(chunk[0])?;
+        let lo = hex_nibble(chunk[1])?;
+        out.push((hi << 4) | lo);
+    }
+
     Some(out)
 }
 
@@ -222,12 +273,14 @@ pub fn decode_request_metadata(data: &[u8]) -> Option<OnChainRequestMetadata> {
 
 /// Build a [`ProverJob`] from a decoded `RequestMetadata` and pre-fetched
 /// prover inputs.
-pub fn build_prover_job(meta: &OnChainRequestMetadata, inputs: Vec<u8>) -> ProverJob {
+pub fn build_prover_job(
+    meta: &OnChainRequestMetadata,
+    inputs: Vec<u8>,
+    callback_accounts: Vec<CommonCallbackAccountMeta>,
+) -> ProverJob {
     let program_id = Pubkey::from_str(PROGRAM_ID_STR).expect("valid Sonar program ID constant");
-    let (result_account, _) = Pubkey::find_program_address(
-        &[b"result", meta.request_id.as_ref()],
-        &program_id,
-    );
+    let (result_account, _) =
+        Pubkey::find_program_address(&[b"result", meta.request_id.as_ref()], &program_id);
 
     ProverJob {
         request_id: meta.request_id,
@@ -237,6 +290,7 @@ pub fn build_prover_job(meta: &OnChainRequestMetadata, inputs: Vec<u8>) -> Prove
         fee: meta.fee,
         callback_program: CommonPubkey::new(meta.callback_program),
         result_account: CommonPubkey::new(result_account.to_bytes()),
+        callback_accounts,
     }
 }
 
@@ -445,8 +499,9 @@ async fn poll_pending_requests(
     const DISC: [u8; 8] = [14, 83, 46, 148, 18, 10, 201, 25];
     let disc_b64 = base64_encode(&DISC);
 
-    // status=Pending is 0 at byte offset 184
-    // Layout: 8 disc + 32*5 pubkeys + 8 deadline + 8 fee = 184
+    // status=Pending is 0 at byte offset 152.
+    // Layout: 8 discriminator + request_id[32] + payer[32] + callback_program[32]
+    // + computation_id[32] + deadline[8] + fee[8] = 152.
     let status_b64 = base64_encode(&[0u8]);
     let client = build_http_client(HTTP_TIMEOUT)?;
 
@@ -461,7 +516,7 @@ async fn poll_pending_requests(
                 "commitment": "confirmed",
                 "filters": [
                     {"memcmp": {"offset": 0, "bytes": disc_b64, "encoding": "base64"}},
-                    {"memcmp": {"offset": 184, "bytes": status_b64, "encoding": "base64"}}
+                    {"memcmp": {"offset": REQUEST_METADATA_STATUS_OFFSET, "bytes": status_b64, "encoding": "base64"}}
                 ]
             }
         ]
@@ -587,6 +642,7 @@ async fn process_request_metadata(
 
     // Parse raw inputs from logs and enrich for known computation types.
     let raw_inputs = parse_inputs_from_logs(&logs).unwrap_or_default();
+    let callback_accounts = parse_callback_accounts_from_logs(&logs).unwrap_or_default();
     info!(
         "process_request_metadata: raw_inputs len={}",
         raw_inputs.len()
@@ -597,10 +653,11 @@ async fn process_request_metadata(
         prover_inputs.len()
     );
 
-    let job = build_prover_job(meta, prover_inputs);
+    let job = build_prover_job(meta, prover_inputs, callback_accounts);
     dispatcher::push_job(redis_conn, jobs_queue, &job).await?;
 
     info!(
+        callback_accounts = job.callback_accounts.len(),
         "Dispatched job for request {} (via polling)",
         hex_encode(&meta.request_id)
     );
@@ -765,12 +822,17 @@ async fn handle_log_event(
 
     // Parse raw inputs from logs and enrich for known computation types.
     let raw_inputs = parse_inputs_from_logs(&logs_resp.logs).unwrap_or_default();
+    let callback_accounts = parse_callback_accounts_from_logs(&logs_resp.logs).unwrap_or_default();
     let prover_inputs = enrich_inputs(&meta.computation_id, &raw_inputs, indexer_url).await?;
 
-    let job = build_prover_job(&meta, prover_inputs);
+    let job = build_prover_job(&meta, prover_inputs, callback_accounts);
     dispatcher::push_job(redis_conn, jobs_queue, &job).await?;
 
-    info!("Dispatched job for request {}", hex_encode(&request_id));
+    info!(
+        callback_accounts = job.callback_accounts.len(),
+        "Dispatched job for request {}",
+        hex_encode(&request_id)
+    );
     Ok(())
 }
 
@@ -944,6 +1006,37 @@ mod tests {
         assert_eq!(parse_inputs_from_logs(&logs), Some(Vec::new()));
     }
 
+    #[test]
+    fn callback_accounts_log_roundtrips() {
+        let mut encoded = Vec::new();
+        encoded.extend_from_slice(&[0x11; 32]);
+        encoded.push(1);
+        encoded.extend_from_slice(&[0x22; 32]);
+        encoded.push(0);
+
+        let hex: String = encoded.iter().map(|byte| format!("{:02x}", byte)).collect();
+        let logs = vec![format!("Program log: sonar:callback_accounts:{hex}")];
+
+        let callback_accounts =
+            parse_callback_accounts_from_logs(&logs).expect("callback accounts should decode");
+
+        assert_eq!(callback_accounts.len(), 2);
+        assert_eq!(*callback_accounts[0].pubkey.as_bytes(), [0x11; 32]);
+        assert!(callback_accounts[0].is_writable);
+        assert_eq!(*callback_accounts[1].pubkey.as_bytes(), [0x22; 32]);
+        assert!(!callback_accounts[1].is_writable);
+    }
+
+    #[test]
+    fn callback_accounts_log_rejects_truncated_record() {
+        let logs = vec![format!(
+            "Program log: sonar:callback_accounts:{}",
+            "11".repeat(CALLBACK_ACCOUNT_META_BYTES - 1)
+        )];
+
+        assert!(parse_callback_accounts_from_logs(&logs).is_none());
+    }
+
     // --- decode_historical_avg_inputs ---
 
     #[test]
@@ -1013,7 +1106,11 @@ mod tests {
     fn build_job_from_metadata_empty_inputs() {
         let data = make_metadata_bytes();
         let meta = decode_request_metadata(&data).unwrap();
-        let job = build_prover_job(&meta, Vec::new());
+        let callback_accounts = vec![CommonCallbackAccountMeta {
+            pubkey: CommonPubkey::new([9u8; 32]),
+            is_writable: true,
+        }];
+        let job = build_prover_job(&meta, Vec::new(), callback_accounts.clone());
         assert_eq!(job.request_id, [1u8; 32]);
         assert_eq!(job.computation_id, [5u8; 32]);
         assert_eq!(job.deadline, 9999);
@@ -1022,7 +1119,11 @@ mod tests {
         let program_id = Pubkey::from_str(PROGRAM_ID_STR).unwrap();
         let (expected_result_account, _) =
             Pubkey::find_program_address(&[b"result", &[1u8; 32]], &program_id);
-        assert_eq!(*job.result_account.as_bytes(), expected_result_account.to_bytes());
+        assert_eq!(
+            *job.result_account.as_bytes(),
+            expected_result_account.to_bytes()
+        );
+        assert_eq!(job.callback_accounts, callback_accounts);
         assert!(job.inputs.is_empty());
     }
 
@@ -1031,7 +1132,7 @@ mod tests {
         let data = make_metadata_bytes();
         let meta = decode_request_metadata(&data).unwrap();
         let inputs = vec![1u8, 2, 3];
-        let job = build_prover_job(&meta, inputs.clone());
+        let job = build_prover_job(&meta, inputs.clone(), Vec::new());
         assert_eq!(job.inputs, inputs);
     }
 

@@ -126,6 +126,7 @@ impl JobProcessor for Sp1JobProcessor {
         // thread via `spawn_blocking` so the tokio reactor is not blocked.
         let computation_id = job.computation_id;
         let inputs = job.inputs.clone();
+        let callback_accounts = job.callback_accounts.clone();
         let (proof, result, public_inputs) =
             tokio::task::spawn_blocking(move || prove_callback_payload(&computation_id, &inputs))
                 .await
@@ -137,6 +138,7 @@ impl JobProcessor for Sp1JobProcessor {
             gas_used: proof.len() as u64,
             proof,
             public_inputs,
+            callback_accounts,
         })
     }
 }

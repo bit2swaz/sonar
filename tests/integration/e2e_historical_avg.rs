@@ -5,13 +5,16 @@ use std::{
     net::TcpListener,
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
-    str::FromStr,
     time::{Duration, Instant},
 };
 
 use anchor_lang::{AccountDeserialize, AccountSerialize, InstructionData, ToAccountMetas};
 use anyhow::{anyhow, bail, Context, Result};
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
+use historical_avg_client::{
+    accounts as historical_avg_accounts, instruction as historical_avg_instruction, CallbackState,
+    HistoricalAvgRequestParams,
+};
 use reqwest::StatusCode;
 use solana_client::rpc_client::RpcClient;
 use solana_sdk::{
@@ -23,10 +26,7 @@ use solana_sdk::{
     system_instruction, system_program,
     transaction::Transaction,
 };
-use sonar_program::{
-    accounts as sonar_accounts, instruction as sonar_instruction, RequestParams,
-    HISTORICAL_AVG_COMPUTATION_ID,
-};
+use sonar_program::HISTORICAL_AVG_COMPUTATION_ID;
 use tempfile::TempDir;
 use testcontainers::{
     core::{IntoContainerPort, WaitFor},
@@ -63,6 +63,12 @@ fn callback_timeout() -> Duration {
 struct BalancePoint {
     slot: u64,
     lamports: u64,
+}
+
+struct SubmittedHistoricalAvgRequest {
+    request_metadata: Pubkey,
+    result_account: Pubkey,
+    callback_state: Pubkey,
 }
 
 struct ChildGuard {
@@ -170,6 +176,7 @@ async fn end_to_end_historical_average_flow_works() -> Result<()> {
     let balances = seed_account_history(&rpc, &client, &observed).await?;
     let seeded_to_slot = rpc.get_slot()?;
     let expected_balances: Vec<u64> = balances.iter().map(|point| point.lamports).collect();
+    let expected_average = expected_balances.iter().sum::<u64>() / expected_balances.len() as u64;
     wait_for_indexed_balances(
         &ports.indexer_url(),
         &observed.pubkey(),
@@ -193,7 +200,7 @@ async fn end_to_end_historical_average_flow_works() -> Result<()> {
     wait_for_coordinator_ready(&mut coordinator_worker, &paths.log_path("coordinator")).await?;
 
     let request_id = Keypair::new().pubkey().to_bytes();
-    let result_account_pda = submit_historical_average_request(
+    let submitted_request = submit_historical_average_request(
         &rpc,
         &client,
         &observed.pubkey(),
@@ -202,13 +209,24 @@ async fn end_to_end_historical_average_flow_works() -> Result<()> {
         request_id,
     )?;
 
-    let (request_metadata_pda, _) =
-        Pubkey::find_program_address(&[b"request", &request_id], &sonar_program::id());
+    wait_for_callback_state_result(
+        &rpc,
+        submitted_request.callback_state,
+        request_id,
+        observed.pubkey(),
+        0,
+        seeded_to_slot,
+        expected_average,
+        &paths.log_path("validator"),
+        &paths.log_path("coordinator"),
+        &paths.log_path("prover"),
+    )
+    .await?;
 
     wait_for_callback_cleanup(
         &rpc,
-        request_metadata_pda,
-        result_account_pda,
+        submitted_request.request_metadata,
+        submitted_request.result_account,
         &paths.log_path("validator"),
         &paths.log_path("coordinator"),
         &paths.log_path("prover"),
@@ -256,8 +274,8 @@ impl TestPaths {
         self.target_dir.join("deploy/sonar_program.so")
     }
 
-    fn echo_callback_so(&self) -> PathBuf {
-        self.target_dir.join("deploy/echo_callback.so")
+    fn historical_avg_client_so(&self) -> PathBuf {
+        self.target_dir.join("deploy/historical_avg_client.so")
     }
 
     fn log_path(&self, name: &str) -> PathBuf {
@@ -329,13 +347,17 @@ fn ensure_local_artifacts(repo_root: &Path) -> Result<()> {
         ]),
         "cargo build -p sonar-indexer --lib",
     )?;
+    run_checked(
+        Command::new("anchor").current_dir(repo_root).arg("build"),
+        "anchor build",
+    )?;
     require_file(
         &repo_root.join("target/deploy/sonar_program.so"),
         "missing target/deploy/sonar_program.so; build the sonar BPF artifact first",
     )?;
     require_file(
-        &repo_root.join("target/deploy/echo_callback.so"),
-        "missing target/deploy/echo_callback.so; build the echo_callback BPF artifact first",
+        &repo_root.join("target/deploy/historical_avg_client.so"),
+        "missing target/deploy/historical_avg_client.so; build the historical_avg_client BPF artifact first",
     )?;
     Ok(())
 }
@@ -481,16 +503,15 @@ fn start_validator(paths: &TestPaths, ports: &PortLayout) -> Result<ChildGuard> 
         .arg(sonar_program::id().to_string())
         .arg(paths.sonar_program_so())
         .arg("--bpf-program")
-        .arg(echo_callback_program_id().to_string())
-        .arg(paths.echo_callback_so())
+        .arg(historical_avg_client_program_id().to_string())
+        .arg(paths.historical_avg_client_so())
         .stdout(Stdio::from(log.try_clone()?))
         .stderr(Stdio::from(log));
     ChildGuard::spawn("validator", command)
 }
 
-fn echo_callback_program_id() -> Pubkey {
-    Pubkey::from_str("J7jsJVQz6xbWFhyxRbzk7nH5ALhStztUNR1nPupnyjxS")
-        .expect("valid echo callback program id")
+fn historical_avg_client_program_id() -> Pubkey {
+    historical_avg_client::id()
 }
 
 fn historical_avg_verifier_registry_pda() -> (Pubkey, u8) {
@@ -752,40 +773,110 @@ fn submit_historical_average_request(
     from_slot: u64,
     to_slot: u64,
     request_id: [u8; 32],
-) -> Result<Pubkey> {
+) -> Result<SubmittedHistoricalAvgRequest> {
     let (request_metadata, _) =
         Pubkey::find_program_address(&[b"request", &request_id], &sonar_program::id());
     let (result_account, _) =
         Pubkey::find_program_address(&[b"result", &request_id], &sonar_program::id());
+    let (callback_state, _) = Pubkey::find_program_address(
+        &[b"client-result", &request_id],
+        &historical_avg_client::id(),
+    );
     let current_slot = rpc.get_slot()?;
-    let mut raw_inputs = Vec::with_capacity(48);
-    raw_inputs.extend_from_slice(&observed_account.to_bytes());
-    raw_inputs.extend_from_slice(&from_slot.to_le_bytes());
-    raw_inputs.extend_from_slice(&to_slot.to_le_bytes());
 
-    let params = RequestParams {
+    let params = HistoricalAvgRequestParams {
         request_id,
-        computation_id: HISTORICAL_AVG_COMPUTATION_ID,
-        inputs: raw_inputs,
+        account: observed_account.to_bytes(),
+        from_slot,
+        to_slot,
         deadline: current_slot + 500,
         fee: REQUEST_FEE_LAMPORTS,
     };
 
     let instruction = Instruction {
-        program_id: sonar_program::id(),
-        accounts: sonar_accounts::Request {
+        program_id: historical_avg_client::id(),
+        accounts: historical_avg_accounts::RequestHistoricalAvg {
             payer: payer.pubkey(),
-            callback_program: echo_callback_program_id(),
+            callback_program: historical_avg_client::id(),
+            callback_state,
             request_metadata,
             result_account,
+            sonar_program: sonar_program::id(),
             system_program: system_program::id(),
         }
         .to_account_metas(None),
-        data: sonar_instruction::Request { params }.data(),
+        data: historical_avg_instruction::RequestHistoricalAvg { params }.data(),
     };
 
     send_transaction(rpc, payer, &[payer], &[instruction])?;
-    Ok(result_account)
+    Ok(SubmittedHistoricalAvgRequest {
+        request_metadata,
+        result_account,
+        callback_state,
+    })
+}
+
+async fn wait_for_callback_state_result(
+    rpc: &RpcClient,
+    callback_state: Pubkey,
+    request_id: [u8; 32],
+    observed_account: Pubkey,
+    from_slot: u64,
+    to_slot: u64,
+    expected_average: u64,
+    validator_log: &Path,
+    coordinator_log: &Path,
+    prover_log: &Path,
+) -> Result<()> {
+    let timeout = callback_timeout();
+    let deadline = Instant::now() + timeout;
+
+    loop {
+        if let Ok(account_data) = rpc.get_account_data(&callback_state) {
+            let mut slice = account_data.as_slice();
+            let state = CallbackState::try_deserialize(&mut slice)
+                .context("deserialize historical_avg callback_state")?;
+
+            if state.is_set {
+                if state.request_id != request_id {
+                    bail!("callback_state request_id did not match the submitted request");
+                }
+                if state.target_account != observed_account.to_bytes() {
+                    bail!("callback_state target_account did not match the observed account");
+                }
+                if state.from_slot != from_slot || state.to_slot != to_slot {
+                    bail!(
+                        "callback_state slot range mismatch: got [{}, {}], expected [{}, {}]",
+                        state.from_slot,
+                        state.to_slot,
+                        from_slot,
+                        to_slot
+                    );
+                }
+                if state.result != expected_average.to_le_bytes().to_vec() {
+                    bail!(
+                        "callback_state result mismatch: got {:?}, expected {:?}",
+                        state.result,
+                        expected_average.to_le_bytes().to_vec()
+                    );
+                }
+
+                return Ok(());
+            }
+        }
+
+        if Instant::now() >= deadline {
+            let validator_output = read_log_output(validator_log);
+            let coordinator_output = read_log_output(coordinator_log);
+            let prover_output = read_log_output(prover_log);
+            bail!(
+                "timed out waiting for historical_avg callback_state after {}s\n{validator_output}\n{coordinator_output}\n{prover_output}",
+                timeout.as_secs()
+            );
+        }
+
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
 }
 
 async fn wait_for_coordinator_ready(
@@ -1006,4 +1097,3 @@ fn read_log_output(path: &Path) -> String {
         ),
     }
 }
-

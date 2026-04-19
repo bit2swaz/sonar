@@ -27,7 +27,7 @@ use solana_sdk::{
 };
 use tracing::{error, info, warn};
 
-use sonar_common::types::ProverResponse;
+use sonar_common::types::{CallbackAccountMeta as CommonCallbackAccountMeta, ProverResponse};
 
 use crate::{dispatcher, listener};
 
@@ -186,6 +186,7 @@ pub fn build_callback_instruction_data(
 /// 3. `prover`            — mutable, signer (coordinator keypair)
 /// 4. `payer`             — mutable, not signer (original request payer)
 /// 5. `callback_program`  — not mutable, not signer
+/// 6+. consumer callback remaining accounts, in the order recorded by the request
 #[allow(clippy::too_many_arguments)]
 pub fn build_callback_instruction(
     program_id: Pubkey,
@@ -194,6 +195,7 @@ pub fn build_callback_instruction(
     prover_pubkey: Pubkey,
     payer_pubkey: Pubkey,
     callback_program: Pubkey,
+    callback_accounts: &[CommonCallbackAccountMeta],
     proof: &[u8],
     public_inputs: &[Vec<u8>],
     result: &[u8],
@@ -205,7 +207,7 @@ pub fn build_callback_instruction(
     let (verifier_registry_pda, _) =
         Pubkey::find_program_address(&[b"verifier", computation_id.as_ref()], &program_id);
 
-    let accounts = vec![
+    let mut accounts = vec![
         AccountMeta::new(request_metadata_pda, false),
         AccountMeta::new(result_account_pda, false),
         AccountMeta::new_readonly(verifier_registry_pda, false),
@@ -213,6 +215,15 @@ pub fn build_callback_instruction(
         AccountMeta::new(payer_pubkey, false),
         AccountMeta::new_readonly(callback_program, false),
     ];
+
+    for callback_account in callback_accounts {
+        let pubkey = Pubkey::new_from_array(*callback_account.pubkey.as_bytes());
+        accounts.push(if callback_account.is_writable {
+            AccountMeta::new(pubkey, false)
+        } else {
+            AccountMeta::new_readonly(pubkey, false)
+        });
+    }
 
     let data = build_callback_instruction_data(proof, public_inputs, result);
 
@@ -409,6 +420,7 @@ async fn process_response(
         keypair.pubkey(),
         payer,
         callback_program,
+        &response.callback_accounts,
         &payload.proof,
         &payload.public_inputs,
         &payload.result,
@@ -439,6 +451,7 @@ async fn process_response(
         proof_len,
         flattened_public_inputs_len,
         priority_fee_micro_lamports,
+        callback_accounts = response.callback_accounts.len(),
         computation_id = %hex_encode(&meta.computation_id),
         "formatted callback payload"
     );
@@ -589,6 +602,7 @@ mod tests {
             &[],
             &[],
             &[],
+            &[],
         );
 
         assert_eq!(ix.accounts.len(), 6);
@@ -621,6 +635,7 @@ mod tests {
             prover,
             payer,
             cb_prog,
+            &[],
             &[],
             &[],
             &[],
@@ -660,6 +675,40 @@ mod tests {
         ];
 
         assert_eq!(estimate_priority_fee_micro_lamports(&samples), 3_000);
+    }
+
+    #[test]
+    fn instruction_appends_callback_accounts_after_fixed_accounts() {
+        let program_id = Pubkey::new_unique();
+        let callback_accounts = vec![
+            CommonCallbackAccountMeta {
+                pubkey: sonar_common::types::Pubkey::new([0x11; 32]),
+                is_writable: true,
+            },
+            CommonCallbackAccountMeta {
+                pubkey: sonar_common::types::Pubkey::new([0x22; 32]),
+                is_writable: false,
+            },
+        ];
+
+        let (ix, _, _) = build_callback_instruction(
+            program_id,
+            &[7u8; 32],
+            &[8u8; 32],
+            Pubkey::new_unique(),
+            Pubkey::new_unique(),
+            Pubkey::new_unique(),
+            &callback_accounts,
+            &[],
+            &[],
+            &[],
+        );
+
+        assert_eq!(ix.accounts.len(), 8);
+        assert_eq!(ix.accounts[6].pubkey, Pubkey::new_from_array([0x11; 32]));
+        assert!(ix.accounts[6].is_writable);
+        assert_eq!(ix.accounts[7].pubkey, Pubkey::new_from_array([0x22; 32]));
+        assert!(!ix.accounts[7].is_writable);
     }
 
     #[test]
@@ -750,6 +799,7 @@ mod tests {
             proof: proof.clone(),
             public_inputs: public_inputs.clone(),
             gas_used: 123,
+            callback_accounts: vec![],
         };
 
         let payload = normalize_callback_payload(&response).expect("payload should normalize");
@@ -773,6 +823,7 @@ mod tests {
             proof: vec![3u8; GROTH16_PROOF_BYTES],
             public_inputs: vec![vec![9u8; 31]],
             gas_used: 1,
+            callback_accounts: vec![],
         };
 
         let error = normalize_callback_payload(&response).expect_err("payload should fail");
@@ -789,6 +840,7 @@ mod tests {
             proof: b"historical-avg-mock-proof".to_vec(),
             public_inputs: vec![vec![4u8; 8]],
             gas_used: 42,
+            callback_accounts: vec![],
         };
 
         let payload = normalize_callback_payload(&response).expect("legacy payload should pass");
@@ -809,6 +861,7 @@ mod tests {
             proof: vec![],
             public_inputs: vec![vec![1u8; 8]],
             gas_used: 0,
+            callback_accounts: vec![],
         };
 
         let error = normalize_callback_payload(&response).expect_err("empty proof should fail");

@@ -38,7 +38,8 @@ pub mod historical_avg_client {
             result_account: ctx.accounts.result_account.to_account_info(),
             system_program: ctx.accounts.system_program.to_account_info(),
         };
-        let cpi_ctx = CpiContext::new(ctx.accounts.sonar_program.to_account_info(), cpi_accounts);
+        let cpi_ctx = CpiContext::new(ctx.accounts.sonar_program.to_account_info(), cpi_accounts)
+            .with_remaining_accounts(vec![ctx.accounts.callback_state.to_account_info()]);
 
         sonar_program::cpi::request(
             cpi_ctx,

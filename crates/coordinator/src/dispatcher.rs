@@ -66,7 +66,7 @@ mod tests {
     use std::time::Duration;
 
     use redis::AsyncCommands;
-    use sonar_common::types::Pubkey;
+    use sonar_common::types::{CallbackAccountMeta, Pubkey};
     use testcontainers::{
         core::{IntoContainerPort, WaitFor},
         runners::AsyncRunner,
@@ -82,6 +82,10 @@ mod tests {
             fee: 500,
             callback_program: Pubkey::new([6u8; 32]),
             result_account: Pubkey::new([7u8; 32]),
+            callback_accounts: vec![CallbackAccountMeta {
+                pubkey: Pubkey::new([8u8; 32]),
+                is_writable: true,
+            }],
         }
     }
 
@@ -92,6 +96,10 @@ mod tests {
             proof: vec![0u8; 32],
             public_inputs: vec![vec![42]],
             gas_used: 200_000,
+            callback_accounts: vec![CallbackAccountMeta {
+                pubkey: Pubkey::new([9u8; 32]),
+                is_writable: false,
+            }],
         }
     }
 
@@ -104,6 +112,7 @@ mod tests {
         assert_eq!(decoded.inputs, job.inputs);
         assert_eq!(decoded.deadline, job.deadline);
         assert_eq!(decoded.callback_program, job.callback_program);
+        assert_eq!(decoded.callback_accounts, job.callback_accounts);
     }
 
     #[test]
@@ -115,6 +124,7 @@ mod tests {
         assert_eq!(decoded.result, resp.result);
         assert_eq!(decoded.public_inputs, resp.public_inputs);
         assert_eq!(decoded.gas_used, resp.gas_used);
+        assert_eq!(decoded.callback_accounts, resp.callback_accounts);
     }
 
     #[test]

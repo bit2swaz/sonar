@@ -14,7 +14,7 @@ use anyhow::anyhow;
 use async_trait::async_trait;
 use redis::AsyncCommands;
 use serde_json::json;
-use sonar_common::types::{ProverJob, ProverResponse, Pubkey};
+use sonar_common::types::{CallbackAccountMeta, ProverJob, ProverResponse, Pubkey};
 use sonar_prover::service::{run_service, JobProcessor, ProverQueue, RedisQueue, ServiceConfig};
 use testcontainers::{
     core::{IntoContainerPort, WaitFor},
@@ -175,6 +175,7 @@ impl JobProcessor for MockProcessor {
             proof: vec![1, 2, 3, 4],
             public_inputs: vec![job.inputs.clone()],
             gas_used: 4,
+            callback_accounts: job.callback_accounts.clone(),
         })
     }
 }
@@ -188,6 +189,10 @@ fn sample_job(seed: u8) -> ProverJob {
         fee: 100,
         callback_program: Pubkey::new([seed.wrapping_add(2); 32]),
         result_account: Pubkey::new([seed.wrapping_add(3); 32]),
+        callback_accounts: vec![CallbackAccountMeta {
+            pubkey: Pubkey::new([seed.wrapping_add(4); 32]),
+            is_writable: seed % 2 == 0,
+        }],
     }
 }
 

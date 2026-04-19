@@ -30,6 +30,8 @@ const GROTH16_PROOF_B_BYTES: usize = 128;
 const GROTH16_PROOF_C_BYTES: usize = 64;
 const GROTH16_PROOF_BYTES: usize =
     GROTH16_PROOF_A_BYTES + GROTH16_PROOF_B_BYTES + GROTH16_PROOF_C_BYTES;
+const CALLBACK_ACCOUNT_META_BYTES: usize = 33;
+const MAX_CALLBACK_REMAINING_ACCOUNTS: usize = 16;
 #[cfg(target_os = "solana")]
 const SONAR_CALLBACK_DISCRIMINATOR: [u8; 8] = [165, 188, 38, 190, 145, 138, 75, 149];
 
@@ -60,6 +62,8 @@ pub mod sonar {
         let current_slot = Clock::get()?.slot;
         require!(params.deadline > current_slot, ErrorCode::DeadlinePassed);
         require!(params.fee > 0, ErrorCode::InsufficientFee);
+
+        let callback_accounts = encode_callback_account_metas(ctx.remaining_accounts)?;
 
         let request_metadata = &mut ctx.accounts.request_metadata;
         request_metadata.request_id = params.request_id;
@@ -109,6 +113,15 @@ pub mod sonar {
         // Format: "sonar:inputs:<lowercase hex-encoded bytes>"
         let hex_inputs: String = params.inputs.iter().map(|b| format!("{:02x}", b)).collect();
         msg!("sonar:inputs:{}", hex_inputs);
+
+        // Emit callback account metadata so the coordinator can replay the
+        // consumer's remaining-account list during callback submission.
+        // Format: "sonar:callback_accounts:<lowercase hex-encoded bytes>"
+        let hex_callback_accounts: String = callback_accounts
+            .iter()
+            .map(|b| format!("{:02x}", b))
+            .collect();
+        msg!("sonar:callback_accounts:{}", hex_callback_accounts);
 
         Ok(())
     }
@@ -483,6 +496,26 @@ fn validate_result_size(result: &[u8]) -> Result<()> {
     Ok(())
 }
 
+fn encode_callback_account_metas(accounts: &[AccountInfo<'_>]) -> Result<Vec<u8>> {
+    require!(
+        accounts.len() <= MAX_CALLBACK_REMAINING_ACCOUNTS,
+        ErrorCode::TooManyCallbackRemainingAccounts
+    );
+
+    let mut encoded = Vec::with_capacity(accounts.len() * CALLBACK_ACCOUNT_META_BYTES);
+    for account in accounts {
+        require!(
+            !account.is_signer,
+            ErrorCode::CallbackRemainingAccountSignerUnsupported
+        );
+
+        encoded.extend_from_slice(account.key.as_ref());
+        encoded.push(u8::from(account.is_writable));
+    }
+
+    Ok(encoded)
+}
+
 fn invoke_callback_program<'info>(
     callback_program: AccountInfo<'info>,
     request_metadata: AccountInfo<'info>,
@@ -610,6 +643,10 @@ pub enum ErrorCode {
     InvalidPublicInputSize,
     #[msg("Result payload exceeds the configured size limit")]
     ResultTooLarge,
+    #[msg("Too many callback remaining accounts were supplied")]
+    TooManyCallbackRemainingAccounts,
+    #[msg("Callback remaining accounts cannot require transaction signatures")]
+    CallbackRemainingAccountSignerUnsupported,
     #[msg("Lamport arithmetic overflowed")]
     LamportOverflow,
 }

@@ -1,5 +1,5 @@
-mod callback_fixtures;
 pub mod artifacts;
+mod callback_fixtures;
 pub mod groth16_wrapper;
 pub mod registry;
 pub mod service;
@@ -9,20 +9,16 @@ use sonar_common::types::ComputationId;
 
 use crate::{
     callback_fixtures::maybe_fixture_callback_payload,
-    groth16_wrapper::{
-        extract_sp1_groth16_payload_from_proof, wrap_stark_to_groth16,
-    },
+    groth16_wrapper::{extract_sp1_groth16_payload_from_proof, wrap_stark_to_groth16},
     registry::{resolve_computation, HISTORICAL_AVG_ELF_PATH},
     sp1_wrapper::{
-        build_sp1_program, run_historical_avg_program_groth16_proof,
-        run_sp1_program_groth16_proof, Sp1Groth16ProofResult,
+        build_sp1_program, run_historical_avg_program_groth16_proof, run_sp1_program_groth16_proof,
+        Sp1Groth16ProofResult,
     },
 };
 
 #[cfg(test)]
-use crate::sp1_wrapper::{
-    run_historical_avg_program_groth16_only, run_sp1_program_groth16_only,
-};
+use crate::sp1_wrapper::{run_historical_avg_program_groth16_only, run_sp1_program_groth16_only};
 
 pub use artifacts::{
     export_registered_artifacts_to_dir, export_verifier_artifact, ComputationVerifierArtifact,
@@ -123,7 +119,9 @@ mod tests {
         callback_fixtures::HISTORICAL_AVG_CALLBACK_FIXTURE_ENV,
         groth16_wrapper::{extract_sp1_groth16_payload, wrap_stark_to_groth16},
         registry::{FIBONACCI_ELF_PATH, HISTORICAL_AVG_ELF_PATH},
-        sp1_wrapper::{load_proof_bundle, run_historical_avg_program, run_sp1_program, Sp1ProofBundle},
+        sp1_wrapper::{
+            load_proof_bundle, run_historical_avg_program, run_sp1_program, Sp1ProofBundle,
+        },
     };
 
     static SP1_FIXTURE: OnceLock<(Vec<u8>, Vec<u8>, Vec<u8>)> = OnceLock::new();
@@ -340,8 +338,8 @@ mod tests {
             .to_le_bytes()
             .to_vec();
 
-        let (proof, result, public_inputs) =
-            prove_callback_payload(&computation_id, &encoded).expect("fixture payload should succeed");
+        let (proof, result, public_inputs) = prove_callback_payload(&computation_id, &encoded)
+            .expect("fixture payload should succeed");
 
         assert_eq!(proof.len(), 256);
         assert_eq!(result, expected);
@@ -370,7 +368,10 @@ mod tests {
         assert_eq!(payload.proof.len(), 256);
         assert_eq!(payload.public_inputs.len(), 5);
         assert!(payload.public_inputs.iter().all(|input| input.len() == 32));
-        assert_eq!(payload.public_inputs[1], expected_public_values_hash.to_vec());
+        assert_eq!(
+            payload.public_inputs[1],
+            expected_public_values_hash.to_vec()
+        );
     }
 
     #[test]
@@ -399,7 +400,10 @@ mod tests {
         assert_eq!(payload.proof.len(), 256);
         assert_eq!(payload.public_inputs.len(), 5);
         assert!(payload.public_inputs.iter().all(|input| input.len() == 32));
-        assert_eq!(payload.public_inputs[1], expected_public_values_hash.to_vec());
+        assert_eq!(
+            payload.public_inputs[1],
+            expected_public_values_hash.to_vec()
+        );
 
         if let Some(value) = previous {
             std::env::set_var("SP1_PROVER", value);

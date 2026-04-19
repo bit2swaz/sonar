@@ -95,7 +95,8 @@ impl ToAccountMetas for Request<'_> {
 ///   the caller-provided `request_id`
 /// - it validates that the supplied writable accounts match those derived PDAs
 /// - it forwards signer seeds and remaining accounts from the provided
-///   [`CpiContext`]
+///   [`CpiContext`], allowing downstream programs to register callback-side
+///   account metas that the coordinator can replay later
 ///
 /// The caller is responsible for choosing a unique `request_id` nonce and for
 /// passing the matching writable Sonar PDA accounts in the context. A common

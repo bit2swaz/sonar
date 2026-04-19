@@ -32,6 +32,17 @@ impl Pubkey {
 pub type ComputationId = [u8; 32];
 
 // ---------------------------------------------------------------------------
+// CallbackAccountMeta
+// ---------------------------------------------------------------------------
+
+/// Additional account metadata that should be replayed during callback.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CallbackAccountMeta {
+    pub pubkey: Pubkey,
+    pub is_writable: bool,
+}
+
+// ---------------------------------------------------------------------------
 // RequestStatus
 // ---------------------------------------------------------------------------
 
@@ -147,6 +158,8 @@ pub struct ProverJob {
     pub fee: u64,
     pub callback_program: Pubkey,
     pub result_account: Pubkey,
+    #[serde(default)]
+    pub callback_accounts: Vec<CallbackAccountMeta>,
 }
 
 /// The response the prover pushes back to the coordinator via Redis.
@@ -158,6 +171,8 @@ pub struct ProverResponse {
     pub public_inputs: Vec<Vec<u8>>,
     /// Simulated compute-unit usage, used for metrics.
     pub gas_used: u64,
+    #[serde(default)]
+    pub callback_accounts: Vec<CallbackAccountMeta>,
 }
 
 // ---------------------------------------------------------------------------
@@ -191,6 +206,13 @@ mod tests {
 
     fn sample_pubkey(seed: u8) -> Pubkey {
         Pubkey::new([seed; 32])
+    }
+
+    fn sample_callback_account(seed: u8, is_writable: bool) -> CallbackAccountMeta {
+        CallbackAccountMeta {
+            pubkey: sample_pubkey(seed),
+            is_writable,
+        }
     }
 
     // --- RequestMetadata ---
@@ -353,6 +375,7 @@ mod tests {
             fee: 9000,
             callback_program: sample_pubkey(5),
             result_account: sample_pubkey(6),
+            callback_accounts: vec![sample_callback_account(7, true)],
         };
         let json = serde_json::to_string(&job).unwrap();
         let decoded: ProverJob = serde_json::from_str(&json).unwrap();
@@ -363,6 +386,24 @@ mod tests {
         assert_eq!(job.fee, decoded.fee);
         assert_eq!(job.callback_program, decoded.callback_program);
         assert_eq!(job.result_account, decoded.result_account);
+        assert_eq!(job.callback_accounts, decoded.callback_accounts);
+    }
+
+    #[test]
+    fn test_prover_job_deserializes_missing_callback_accounts_as_empty() {
+        let json = serde_json::json!({
+            "request_id": sample_id(),
+            "computation_id": vec![0x01; 32],
+            "inputs": [0x10, 0x20],
+            "deadline": 12345,
+            "fee": 9000,
+            "callback_program": sample_pubkey(5),
+            "result_account": sample_pubkey(6),
+        })
+        .to_string();
+
+        let decoded: ProverJob = serde_json::from_str(&json).unwrap();
+        assert!(decoded.callback_accounts.is_empty());
     }
 
     // --- ProverResponse ---
@@ -375,6 +416,7 @@ mod tests {
             proof: vec![0xBB; 32],
             public_inputs: vec![vec![0x37; 8]],
             gas_used: 200_000,
+            callback_accounts: vec![sample_callback_account(8, false)],
         };
         let json = serde_json::to_string(&resp).unwrap();
         let decoded: ProverResponse = serde_json::from_str(&json).unwrap();
@@ -383,6 +425,22 @@ mod tests {
         assert_eq!(resp.proof, decoded.proof);
         assert_eq!(resp.public_inputs, decoded.public_inputs);
         assert_eq!(resp.gas_used, decoded.gas_used);
+        assert_eq!(resp.callback_accounts, decoded.callback_accounts);
+    }
+
+    #[test]
+    fn test_prover_response_deserializes_missing_callback_accounts_as_empty() {
+        let json = serde_json::json!({
+            "request_id": sample_id(),
+            "result": [55],
+            "proof": [187, 187, 187],
+            "public_inputs": [[55]],
+            "gas_used": 200000,
+        })
+        .to_string();
+
+        let decoded: ProverResponse = serde_json::from_str(&json).unwrap();
+        assert!(decoded.callback_accounts.is_empty());
     }
 
     // --- GasEstimate ---

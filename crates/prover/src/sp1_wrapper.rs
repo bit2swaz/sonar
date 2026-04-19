@@ -42,11 +42,7 @@ pub(crate) fn run_sp1_program_groth16_proof(
     elf: &[u8],
     inputs: &[u8],
 ) -> anyhow::Result<Sp1Groth16ProofResult> {
-    run_sp1_program_groth16_proof_internal(
-        elf,
-        inputs,
-        should_verify_callback_proofs_locally(),
-    )
+    run_sp1_program_groth16_proof_internal(elf, inputs, should_verify_callback_proofs_locally())
 }
 
 fn run_sp1_program_groth16_proof_internal(
@@ -178,12 +174,7 @@ pub(crate) fn run_historical_avg_program_groth16_only(
     elf: &[u8],
     inputs: &[u8],
 ) -> anyhow::Result<(Vec<u8>, Vec<u8>, Vec<u8>)> {
-    run_historical_avg_program_internal(
-        elf,
-        inputs,
-        false,
-        should_verify_callback_proofs_locally(),
-    )
+    run_historical_avg_program_internal(elf, inputs, false, should_verify_callback_proofs_locally())
 }
 
 pub(crate) fn run_historical_avg_program_groth16_proof(
@@ -227,7 +218,9 @@ fn run_historical_avg_program_groth16_proof_internal(
     }
 
     Ok(Sp1Groth16ProofResult {
-        result: compute_historical_avg_result(&balances).to_le_bytes().to_vec(),
+        result: compute_historical_avg_result(&balances)
+            .to_le_bytes()
+            .to_vec(),
         proof: groth16_proof,
     })
 }
@@ -397,7 +390,10 @@ fn using_mock_prover() -> bool {
 fn should_verify_callback_proofs_locally() -> bool {
     std::env::var("SONAR_VERIFY_CALLBACK_PROOFS_LOCALLY")
         .map(|value| {
-            matches!(value.to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on")
+            matches!(
+                value.to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
         })
         .unwrap_or(false)
 }

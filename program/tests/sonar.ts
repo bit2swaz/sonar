@@ -194,6 +194,24 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+async function fetchConfirmedTransactionOrFail(
+  connection: anchor.web3.Connection,
+  signature: string
+) {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const transaction = await connection.getTransaction(signature, {
+      commitment: "confirmed",
+      maxSupportedTransactionVersion: 0,
+    });
+    if (transaction !== null) {
+      return transaction;
+    }
+    await sleep(250);
+  }
+
+  assert.fail(`request transaction ${signature} should be retrievable`);
+}
+
 async function waitForSlot(provider: anchor.AnchorProvider, targetSlot: number): Promise<void> {
   for (let attempt = 0; attempt < 30; attempt += 1) {
     const currentSlot = await provider.connection.getSlot();
@@ -600,6 +618,64 @@ describe("Sonar ZK Coprocessor — Phase 2.3 Integration Tests", () => {
 
       assert.isAbove(before - after, fee - 20_000, "payer lost at least fee");
       assert.isAbove(pdaBal, fee - 1, "PDA holds at least fee lamports");
+    });
+
+    it("request emits callback remaining-account metadata in logs", async () => {
+      const rid = randomId();
+      const [reqPda] = requestPDA(sonarProgramId, rid);
+      const [resPda] = resultPDA(sonarProgramId, rid);
+      const slot = await provider.connection.getSlot();
+      const callbackState = Keypair.generate();
+
+      const airdrop = await provider.connection.requestAirdrop(
+        callbackState.publicKey,
+        LAMPORTS_PER_SOL
+      );
+      await provider.connection.confirmTransaction(airdrop, "confirmed");
+
+      const signature = await program.methods
+        .request({ requestId: Array.from(rid), computationId: Array.from(DEMO_COMPUTATION_ID), inputs: Buffer.alloc(0), deadline: new anchor.BN(slot + 5000), fee: new anchor.BN(100_000) })
+        .accounts({ payer: provider.wallet.publicKey, callbackProgram: echoCallbackId, requestMetadata: reqPda, resultAccount: resPda, systemProgram: SystemProgram.programId })
+        .remainingAccounts([{ pubkey: callbackState.publicKey, isSigner: false, isWritable: true }])
+        .rpc();
+
+      const transaction = await fetchConfirmedTransactionOrFail(
+        provider.connection,
+        signature
+      );
+
+      const expectedLog = `sonar:callback_accounts:${Buffer.concat([
+        callbackState.publicKey.toBuffer(),
+        Buffer.from([1]),
+      ]).toString("hex")}`;
+      const logMessages = transaction?.meta?.logMessages ?? [];
+      assert.isTrue(
+        logMessages.some((line) => line.includes(expectedLog)),
+        `expected callback metadata log ${expectedLog}, got ${logMessages.join("\n")}`
+      );
+    });
+
+    it("rejects request when callback remaining accounts require signatures", async () => {
+      const rid = randomId();
+      const [reqPda] = requestPDA(sonarProgramId, rid);
+      const [resPda] = resultPDA(sonarProgramId, rid);
+      const slot = await provider.connection.getSlot();
+      const extraSigner = Keypair.generate();
+
+      const airdrop = await provider.connection.requestAirdrop(
+        extraSigner.publicKey,
+        LAMPORTS_PER_SOL
+      );
+      await provider.connection.confirmTransaction(airdrop, "confirmed");
+
+      await expectError(async () => {
+        await program.methods
+          .request({ requestId: Array.from(rid), computationId: Array.from(DEMO_COMPUTATION_ID), inputs: Buffer.alloc(0), deadline: new anchor.BN(slot + 5000), fee: new anchor.BN(100_000) })
+          .accounts({ payer: provider.wallet.publicKey, callbackProgram: echoCallbackId, requestMetadata: reqPda, resultAccount: resPda, systemProgram: SystemProgram.programId })
+          .remainingAccounts([{ pubkey: extraSigner.publicKey, isSigner: true, isWritable: false }])
+          .signers([extraSigner])
+          .rpc();
+      }, "CallbackRemainingAccountSignerUnsupported");
     });
 
     it("rejects request with deadline in the past (DeadlinePassed)", async () => {

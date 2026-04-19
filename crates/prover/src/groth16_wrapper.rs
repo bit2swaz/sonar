@@ -50,10 +50,8 @@ pub(crate) fn extract_sp1_groth16_payload_from_proof(
         anyhow::bail!("cached SP1 proof is not a Groth16 proof");
     };
 
-    let proof = sp1_proof_to_raw_groth16_bytes(
-        &groth16_proof.raw_proof,
-        &groth16_proof.encoded_proof,
-    )?;
+    let proof =
+        sp1_proof_to_raw_groth16_bytes(&groth16_proof.raw_proof, &groth16_proof.encoded_proof)?;
     let public_inputs = groth16_proof
         .public_inputs
         .iter()
@@ -66,10 +64,7 @@ pub(crate) fn extract_sp1_groth16_payload_from_proof(
     })
 }
 
-fn sp1_proof_to_raw_groth16_bytes(
-    raw_proof: &str,
-    encoded_proof: &str,
-) -> anyhow::Result<Vec<u8>> {
+fn sp1_proof_to_raw_groth16_bytes(raw_proof: &str, encoded_proof: &str) -> anyhow::Result<Vec<u8>> {
     if !raw_proof.is_empty() {
         return raw_proof_to_raw_groth16_bytes(raw_proof);
     }
@@ -240,8 +235,8 @@ mod tests {
 
         let direct = extract_sp1_groth16_payload_from_proof(&proof)
             .expect("direct proof extraction should work");
-        let from_bundle = extract_sp1_groth16_payload(&serialized_bundle)
-            .expect("bundle extraction should work");
+        let from_bundle =
+            extract_sp1_groth16_payload(&serialized_bundle).expect("bundle extraction should work");
 
         assert_eq!(from_bundle, direct);
         assert_eq!(from_bundle.proof, raw_proof);

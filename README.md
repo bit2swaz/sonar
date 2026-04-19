@@ -183,6 +183,23 @@ The script:
 - builds the workspace with a platform-tools fallback when needed
 - deploys to devnet and verifies the deployed program account
 
+### Devnet smoke + benchmarks
+
+Use the wrapper below when you want one reproducible remote-devnet pass that deploys the clean workspace state, ensures the prover-backed fibonacci verifier exists, starts a minimal local coordinator/prover stack against devnet, and then collects the current CU and latency measurements:
+
+```bash
+bash scripts/devnet-smoke-bench.sh
+```
+
+The wrapper writes per-run logs under `.devnet/benchmarks/<timestamp>/` and runs these scripts in order:
+
+- `scripts/benchmark-cu.ts`
+- `scripts/benchmark-prover-starts.ts`
+- `scripts/benchmark-load.ts`
+- `scripts/benchmark-throughput.ts`
+
+It intentionally defaults to the fibonacci computation for devnet benchmarking. Remote devnet `historical_avg` still depends on indexed account-history data that this wrapper does not provision.
+
 ### Observability stack
 
 - `docker/prometheus/prometheus.yml` scrapes the coordinator on `9090` and prover on `9091`

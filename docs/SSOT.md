@@ -108,6 +108,7 @@ The repository includes the following operational helpers and topology files:
 - `docker-compose.prod.yml` for `postgres`, `redis`, `coordinator`, `prover`, `prometheus`, and `grafana`
 - `docker/prometheus/prometheus.yml` for scraping coordinator and prover metrics
 - `scripts/deploy-devnet.sh` for repeatable Anchor workspace deployment to devnet
+- `scripts/devnet-smoke-bench.sh` for a reproducible remote-devnet smoke plus benchmark sequence on the prover-backed fibonacci path
 - `scripts/local-ci.sh` and `.actrc` for local GitHub Actions execution via `act`
 
 Important current nuance: the prod-oriented Compose file does not run the indexer. `INDEXER_URL` defaults to `http://host.docker.internal:8080`, so the coordinator and prover currently expect an externally managed indexer API.

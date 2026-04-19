@@ -7,8 +7,8 @@ import {
   SystemProgram,
   type Commitment,
 } from "@solana/web3.js";
-import { randomBytes } from "crypto";
-import { existsSync } from "fs";
+import { createHash, randomBytes } from "crypto";
+import { existsSync, readFileSync } from "fs";
 import { homedir } from "os";
 import { resolve } from "path";
 import { performance } from "perf_hooks";
@@ -26,6 +26,10 @@ const DEFAULT_DEADLINE_SLOT_DELTA = 5_000;
 const DEFAULT_DURATION_SECONDS = 60;
 const DEFAULT_COMMITMENT: Commitment = "confirmed";
 const SUBMISSION_CONTEXT_TTL_MS = 10_000;
+const FIBONACCI_ELF_PATH = resolve(
+  process.cwd(),
+  "programs/fibonacci/elf/fibonacci-program"
+);
 
 const DEMO_COMPUTATION_ID = Buffer.from([
   23, 199, 119, 83, 7, 207, 206, 48, 5, 163, 228, 138, 241, 216, 145, 91,
@@ -37,7 +41,7 @@ const HISTORICAL_AVG_COMPUTATION_ID = Buffer.from([
   3, 201, 204, 111, 144, 62, 32, 159, 91, 227, 160, 78, 252, 195, 98, 100,
 ]);
 
-type SupportedComputation = "demo" | "historical-avg";
+type SupportedComputation = "demo" | "fibonacci" | "historical-avg";
 
 type CliOptions = {
   durationSeconds: number;
@@ -53,6 +57,7 @@ type CliOptions = {
   observedAccount?: PublicKey;
   fromSlot?: number;
   toSlot?: number;
+  fibonacciN: number;
 };
 
 type SubmitResult = {
@@ -90,12 +95,13 @@ function usage(): string {
     `  --callback-program <pubkey>       Callback program ID (default: ${DEFAULT_CALLBACK_PROGRAM_ID.toBase58()})`,
     `  --fee-lamports <lamports>         Request fee in lamports (default: ${DEFAULT_REQUEST_FEE_LAMPORTS})`,
     `  --deadline-slots <slots>          Slot delta added to the current slot (default: ${DEFAULT_DEADLINE_SLOT_DELTA})`,
-    "  --computation <demo|historical-avg>",
-    "                                    Computation to request (default: demo)",
+    "  --computation <demo|fibonacci|historical-avg>",
+    "                                    Computation to request (default: fibonacci)",
     "  --inputs-hex <hex>                Raw request inputs as hex bytes (demo mode override)",
     "  --observed-account <pubkey>       Historical-average input account",
     "  --from-slot <slot>                Historical-average input start slot",
     "  --to-slot <slot>                  Historical-average input end slot",
+    "  --fib-n <n>                       Fibonacci input for the prover guest (default: 30)",
     "  --help                            Show this message",
   ].join("\n");
 }
@@ -156,7 +162,8 @@ function parseArgs(argv: string[]): CliOptions {
     callbackProgramId: DEFAULT_CALLBACK_PROGRAM_ID,
     feeLamports: DEFAULT_REQUEST_FEE_LAMPORTS,
     deadlineSlotDelta: DEFAULT_DEADLINE_SLOT_DELTA,
-    computation: "demo",
+    computation: "fibonacci",
+    fibonacciN: 30,
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -211,8 +218,10 @@ function parseArgs(argv: string[]): CliOptions {
         break;
       case "--computation":
         if (!next) fail("--computation requires a value");
-        if (next !== "demo" && next !== "historical-avg") {
-          fail(`--computation must be one of: demo, historical-avg (got \"${next}\")`);
+        if (next !== "demo" && next !== "fibonacci" && next !== "historical-avg") {
+          fail(
+            `--computation must be one of: demo, fibonacci, historical-avg (got \"${next}\")`
+          );
         }
         options.computation = next;
         index += 1;
@@ -237,6 +246,11 @@ function parseArgs(argv: string[]): CliOptions {
         options.toSlot = parseNonNegativeInteger(next, "--to-slot");
         index += 1;
         break;
+      case "--fib-n":
+        if (!next) fail("--fib-n requires a value");
+        options.fibonacciN = parsePositiveInteger(next, "--fib-n");
+        index += 1;
+        break;
       default:
         fail(`Unknown argument: ${arg}\n\n${usage()}`);
     }
@@ -255,6 +269,10 @@ function parseArgs(argv: string[]): CliOptions {
     if (options.toSlot < options.fromSlot) {
       fail("--to-slot must be greater than or equal to --from-slot");
     }
+  }
+
+  if (options.computation === "fibonacci" && !existsSync(FIBONACCI_ELF_PATH)) {
+    fail(`Fibonacci ELF not found at ${FIBONACCI_ELF_PATH}`);
   }
 
   if (!existsSync(options.walletPath)) {
@@ -299,7 +317,25 @@ function encodeHistoricalAvgInputs(
   return buffer;
 }
 
+function encodeFibonacciInputs(n: number): Buffer {
+  const buffer = Buffer.alloc(4);
+  buffer.writeUInt32LE(n, 0);
+  return buffer;
+}
+
+function resolveFibonacciComputationId(): Buffer {
+  const elf = readFileSync(FIBONACCI_ELF_PATH);
+  return createHash("sha256").update(elf).digest();
+}
+
 function resolveComputationInputs(options: CliOptions): { computationId: Buffer; inputs: Buffer } {
+  if (options.computation === "fibonacci") {
+    return {
+      computationId: resolveFibonacciComputationId(),
+      inputs: encodeFibonacciInputs(options.fibonacciN),
+    };
+  }
+
   if (options.computation === "historical-avg") {
     return {
       computationId: Buffer.from(HISTORICAL_AVG_COMPUTATION_ID),

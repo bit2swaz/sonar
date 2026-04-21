@@ -13,7 +13,11 @@ use tokio::{
 };
 use tracing::{debug, error, info, warn};
 
-use crate::{prove_callback_payload, registry::resolve_computation};
+use crate::{
+    prove_callback_payload,
+    registry::resolve_computation,
+    sp1_wrapper::preflight_selected_prover_backend,
+};
 
 pub const DEFAULT_JOB_QUEUE: &str = "sonar:jobs";
 pub const DEFAULT_RESPONSE_QUEUE: &str = "sonar:responses";
@@ -147,6 +151,10 @@ pub async fn run_redis_service(
     config: &Config,
     shutdown: watch::Receiver<bool>,
 ) -> anyhow::Result<()> {
+    tokio::task::spawn_blocking(preflight_selected_prover_backend)
+        .await
+        .context("prover runtime preflight panicked")??;
+
     let queue = Arc::new(RedisQueue::new(&config.coordinator.redis_url)?);
     let processor = Arc::new(Sp1JobProcessor);
     run_service(

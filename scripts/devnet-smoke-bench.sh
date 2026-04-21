@@ -692,25 +692,25 @@ wait_for_process "$PROVER_PID" "prover" "$LOG_DIR/prover.log"
 if (( RUN_CU == 1 )); then
   run_step \
     "Running devnet callback CU smoke" \
-    bash -lc "cd '$ROOT_DIR' && npx ts-node --transpile-only scripts/benchmark-cu.ts --rpc-url '$RPC_URL' --wallet '$wallet_path' --program-id '$PROGRAM_ID' --callback-program '$CALLBACK_PROGRAM_ID' --computation fibonacci --fib-n '$FIB_N' --timeout-seconds '$TIMEOUT_SECONDS' --poll-interval-ms '$POLL_INTERVAL_MS' | tee '$BENCH_LOG_DIR/benchmark-cu.log'"
+    bash -lc "set -o pipefail && cd '$ROOT_DIR' && npx ts-node --transpile-only scripts/benchmark-cu.ts --rpc-url '$RPC_URL' --wallet '$wallet_path' --program-id '$PROGRAM_ID' --callback-program '$CALLBACK_PROGRAM_ID' --computation fibonacci --fib-n '$FIB_N' --timeout-seconds '$TIMEOUT_SECONDS' --poll-interval-ms '$POLL_INTERVAL_MS' | tee '$BENCH_LOG_DIR/benchmark-cu.log'"
 fi
 
 if (( RUN_COLD_WARM == 1 )); then
   run_step \
     "Running devnet cold-vs-warm prover benchmark" \
-    bash -lc "cd '$ROOT_DIR' && npx ts-node --transpile-only scripts/benchmark-prover-starts.ts --rpc-url '$RPC_URL' --wallet '$wallet_path' --program-id '$PROGRAM_ID' --callback-program '$CALLBACK_PROGRAM_ID' --computation fibonacci --fib-n '$FIB_N' --timeout-seconds '$TIMEOUT_SECONDS' --poll-interval-ms '$POLL_INTERVAL_MS' | tee '$BENCH_LOG_DIR/benchmark-prover-starts.log'"
+    bash -lc "set -o pipefail && cd '$ROOT_DIR' && npx ts-node --transpile-only scripts/benchmark-prover-starts.ts --rpc-url '$RPC_URL' --wallet '$wallet_path' --program-id '$PROGRAM_ID' --callback-program '$CALLBACK_PROGRAM_ID' --computation fibonacci --fib-n '$FIB_N' --timeout-seconds '$TIMEOUT_SECONDS' --poll-interval-ms '$POLL_INTERVAL_MS' | tee '$BENCH_LOG_DIR/benchmark-prover-starts.log'"
 fi
 
 if (( RUN_LOAD == 1 )); then
   run_step \
     "Running devnet concurrent load benchmark" \
-    bash -lc "cd '$ROOT_DIR' && npx ts-node --transpile-only scripts/benchmark-load.ts --requests '$LOAD_REQUESTS' --rpc-url '$RPC_URL' --wallet '$wallet_path' --program-id '$PROGRAM_ID' --callback-program '$CALLBACK_PROGRAM_ID' --computation fibonacci --fib-n '$FIB_N' | tee '$BENCH_LOG_DIR/benchmark-load.log'"
+    bash -lc "set -o pipefail && cd '$ROOT_DIR' && npx ts-node --transpile-only scripts/benchmark-load.ts --requests '$LOAD_REQUESTS' --rpc-url '$RPC_URL' --wallet '$wallet_path' --program-id '$PROGRAM_ID' --callback-program '$CALLBACK_PROGRAM_ID' --computation fibonacci --fib-n '$FIB_N' | tee '$BENCH_LOG_DIR/benchmark-load.log'"
 fi
 
 if (( RUN_THROUGHPUT == 1 )); then
   run_step \
     "Running devnet sustained throughput benchmark" \
-    bash -lc "cd '$ROOT_DIR' && npx ts-node --transpile-only scripts/benchmark-throughput.ts --tps '$THROUGHPUT_TPS' --duration '$THROUGHPUT_DURATION' --rpc-url '$RPC_URL' --wallet '$wallet_path' --program-id '$PROGRAM_ID' --callback-program '$CALLBACK_PROGRAM_ID' --computation fibonacci --fib-n '$FIB_N' | tee '$BENCH_LOG_DIR/benchmark-throughput.log'"
+    bash -lc "set -o pipefail && cd '$ROOT_DIR' && npx ts-node --transpile-only scripts/benchmark-throughput.ts --tps '$THROUGHPUT_TPS' --duration '$THROUGHPUT_DURATION' --rpc-url '$RPC_URL' --wallet '$wallet_path' --program-id '$PROGRAM_ID' --callback-program '$CALLBACK_PROGRAM_ID' --computation fibonacci --fib-n '$FIB_N' | tee '$BENCH_LOG_DIR/benchmark-throughput.log'"
 fi
 
 log "Devnet smoke + benchmark sequence complete"

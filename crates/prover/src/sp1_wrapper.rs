@@ -558,20 +558,36 @@ fn decode_fibonacci_input(inputs: &[u8]) -> anyhow::Result<u32> {
     Ok(u32::from_le_bytes(bytes))
 }
 
+pub(crate) fn preflight_selected_prover_backend() -> anyhow::Result<()> {
+    configure_prover_environment();
+    let _ = cached_blocking_prover()?;
+    Ok(())
+}
+
 fn cached_blocking_prover() -> anyhow::Result<CachedBlockingProver> {
+    let runtime = current_prover_runtime_key();
     let cache = PROVER_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+
+    {
+        let cache = cache
+            .lock()
+            .map_err(|_| anyhow!("SP1 prover cache mutex poisoned"))?;
+        if let Some(cached) = cache.get(&runtime) {
+            return Ok(cached.clone());
+        }
+    }
+
+    // Create the runtime-specific prover outside the cache mutex so backend init panics
+    // do not poison the cache for the rest of the process lifetime.
+    let created = CachedBlockingProver {
+        prover: ProverClient::from_env(),
+        proving_keys: Arc::new(Mutex::new(HashMap::new())),
+    };
+
     let mut cache = cache
         .lock()
         .map_err(|_| anyhow!("SP1 prover cache mutex poisoned"))?;
-
-    let runtime = current_prover_runtime_key();
-    let cached = cache
-        .entry(runtime)
-        .or_insert_with(|| CachedBlockingProver {
-            prover: ProverClient::from_env(),
-            proving_keys: Arc::new(Mutex::new(HashMap::new())),
-        })
-        .clone();
+    let cached = cache.entry(runtime).or_insert_with(|| created.clone()).clone();
 
     Ok(cached)
 }
@@ -581,21 +597,29 @@ fn cached_proving_key(
     elf: &[u8],
     setup_error_context: &'static str,
 ) -> anyhow::Result<CachedBlockingProvingKey> {
+    {
+        let keys = cached
+            .proving_keys
+            .lock()
+            .map_err(|_| anyhow!("SP1 proving key cache mutex poisoned"))?;
+
+        if let Some(pk) = keys.get(elf) {
+            return Ok(pk.clone());
+        }
+    }
+
+    let elf_key = elf.to_vec();
+
+    let pk = cached
+        .prover
+        .setup(Elf::from(elf_key.clone()))
+        .context(setup_error_context)?;
+
     let mut keys = cached
         .proving_keys
         .lock()
         .map_err(|_| anyhow!("SP1 proving key cache mutex poisoned"))?;
-
-    if let Some(pk) = keys.get(elf) {
-        return Ok(pk.clone());
-    }
-
-    let pk = cached
-        .prover
-        .setup(Elf::from(elf.to_vec()))
-        .context(setup_error_context)?;
-    keys.insert(elf.to_vec(), pk.clone());
-    Ok(pk)
+    Ok(keys.entry(elf_key).or_insert_with(|| pk.clone()).clone())
 }
 
 fn current_prover_runtime_key() -> ProverRuntimeCacheKey {

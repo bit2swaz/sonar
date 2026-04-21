@@ -118,7 +118,10 @@ fn flatten_public_inputs_any(public_inputs: &[Vec<u8>]) -> anyhow::Result<Vec<u8
 
     let total_len = public_inputs.iter().map(Vec::len).sum();
     let mut flattened = Vec::with_capacity(total_len);
-    for input in public_inputs {
+    for (index, input) in public_inputs.iter().enumerate() {
+        if input.is_empty() {
+            anyhow::bail!("public input {index} is empty");
+        }
         flattened.extend_from_slice(input);
     }
     Ok(flattened)
@@ -868,5 +871,41 @@ mod tests {
         assert!(error
             .to_string()
             .contains("callback response proof is empty"));
+    }
+
+    #[test]
+    fn normalize_legacy_payload_rejects_missing_public_inputs() {
+        let response = ProverResponse {
+            request_id: [4u8; 32],
+            result: vec![0xAA],
+            proof: b"legacy-proof".to_vec(),
+            public_inputs: vec![],
+            gas_used: 0,
+            callback_accounts: vec![],
+        };
+
+        let error =
+            normalize_callback_payload(&response).expect_err("missing public inputs should fail");
+        assert!(error
+            .to_string()
+            .contains("callback response has no public inputs"));
+    }
+
+    #[test]
+    fn normalize_legacy_payload_rejects_empty_public_input_rows() {
+        let response = ProverResponse {
+            request_id: [5u8; 32],
+            result: vec![0xAA],
+            proof: b"legacy-proof".to_vec(),
+            public_inputs: vec![vec![]],
+            gas_used: 0,
+            callback_accounts: vec![],
+        };
+
+        let error = normalize_callback_payload(&response)
+            .expect_err("empty public input rows should fail");
+        assert!(error
+            .to_string()
+            .contains("public input 0 is empty"));
     }
 }

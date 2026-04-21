@@ -21,7 +21,7 @@ http_port          = 18080
 [coordinator]
 redis_url                = "${REDIS_URL}"
 callback_timeout_seconds = 30
-max_concurrent_jobs      = 4
+max_concurrent_jobs      = 1
 indexer_url              = "http://127.0.0.1:18080"
 
 [prover]

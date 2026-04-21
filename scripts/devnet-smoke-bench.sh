@@ -34,6 +34,7 @@ DEFAULT_TIMEOUT_SECONDS=900
 DEFAULT_POLL_INTERVAL_MS=2000
 DEFAULT_PROGRAM_ID="Gf7RSZYmfNJ5kv2AJvcv5rjCANP6ePExJR19D91MECLY"
 DEFAULT_CALLBACK_PROGRAM_ID="J7jsJVQz6xbWFhyxRbzk7nH5ALhStztUNR1nPupnyjxS"
+DEFAULT_SERVICE_PROFILE="release"
 REDIS_CONTAINER_NAME="sonar-devnet-smoke-redis"
 NO_DNA="${NO_DNA:-1}"
 
@@ -46,11 +47,13 @@ RUN_THROUGHPUT=1
 KEEP_SERVICES=0
 SKIP_BUILD=0
 DRY_RUN=0
+FORCE_DEPLOY=0
 
 RPC_URL="${SOLANA_RPC_URL:-$DEFAULT_RPC_URL}"
 WS_URL="${SOLANA_WS_URL:-$DEFAULT_WS_URL}"
 REDIS_PORT="${REDIS_PORT:-$DEFAULT_REDIS_PORT}"
 CONFIG_PATH="${SONAR_DEVNET_SMOKE_CONFIG:-$DEFAULT_CONFIG_PATH}"
+SERVICE_PROFILE="${SONAR_DEVNET_SMOKE_SERVICE_PROFILE:-$DEFAULT_SERVICE_PROFILE}"
 FIB_N="$DEFAULT_FIB_N"
 LOAD_REQUESTS="$DEFAULT_LOAD_REQUESTS"
 THROUGHPUT_TPS="$DEFAULT_THROUGHPUT_TPS"
@@ -81,6 +84,7 @@ Options:
   --skip-load                 Skip scripts/benchmark-load.ts
   --skip-throughput           Skip scripts/benchmark-throughput.ts
   --skip-build                Skip local cargo/anchor builds
+  --force-deploy              Run deploy even if required devnet programs already match local artifacts
   --keep-services             Leave local redis/coordinator/prover running after exit
   --dry-run                   Print the planned steps without executing them
   --rpc-url <url>             Solana RPC URL (default: $DEFAULT_RPC_URL)
@@ -108,12 +112,65 @@ Notes:
 EOF
 }
 
+service_target_dir() {
+  case "$SERVICE_PROFILE" in
+    debug|dev)
+      printf '%s\n' "$ROOT_DIR/target/debug"
+      ;;
+    release)
+      printf '%s\n' "$ROOT_DIR/target/release"
+      ;;
+    *)
+      die "unsupported service profile: $SERVICE_PROFILE (expected debug or release)"
+      ;;
+  esac
+}
+
+build_service_binaries() {
+  case "$SERVICE_PROFILE" in
+    debug|dev)
+      cargo build --bin sonar-coordinator --bin sonar-prover
+      ;;
+    release)
+      cargo build --release --bin sonar-coordinator --bin sonar-prover
+      ;;
+    *)
+      die "unsupported service profile: $SERVICE_PROFILE (expected debug or release)"
+      ;;
+  esac
+}
+
 require_command() {
   command -v "$1" >/dev/null 2>&1 || die "missing required command: $1"
 }
 
 require_file() {
   [[ -f "$1" ]] || die "missing required file: $1"
+}
+
+program_binary_matches_remote() {
+  local program_id="$1"
+  local local_artifact="$2"
+  local artifact_label="$3"
+  local remote_dump_path="$RUN_ROOT/${artifact_label}.remote.so"
+
+  if ! solana program show "$program_id" --url "$RPC_URL" >/dev/null 2>&1; then
+    log "$artifact_label is not deployed on devnet"
+    return 1
+  fi
+
+  if ! solana program dump "$program_id" "$remote_dump_path" --url "$RPC_URL" >/dev/null 2>&1; then
+    log "Failed to dump deployed $artifact_label for comparison"
+    return 1
+  fi
+
+  if cmp -s "$remote_dump_path" "$local_artifact"; then
+    log "$artifact_label already matches the deployed artifact"
+    return 0
+  fi
+
+  log "$artifact_label differs from the deployed artifact"
+  return 1
 }
 
 expand_path() {
@@ -163,11 +220,12 @@ start_background() {
   local log_file="$2"
   shift 2
 
-  log "$description"
+  # Callers capture stdout to read the child PID, so status output must stay off stdout.
+  log "$description" >&2
   if (( DRY_RUN == 1 )); then
-    printf '  %q' "$@"
-    printf ' > %q 2>&1 &\n' "$log_file"
-    printf '  # background launch skipped in dry-run mode\n'
+    printf '  %q' "$@" >&2
+    printf ' > %q 2>&1 &\n' "$log_file" >&2
+    printf '  # background launch skipped in dry-run mode\n' >&2
     printf '%s\n' "dry-run"
     return 0
   fi
@@ -352,6 +410,10 @@ while (( $# > 0 )); do
       SKIP_BUILD=1
       shift
       ;;
+    --force-deploy)
+      FORCE_DEPLOY=1
+      shift
+      ;;
     --keep-services)
       KEEP_SERVICES=1
       shift
@@ -447,9 +509,11 @@ export DATABASE_URL="${DATABASE_URL:-postgresql://unused:unused@127.0.0.1:15432/
 export REDIS_URL="redis://127.0.0.1:${REDIS_PORT}"
 export SP1_PROVING_KEY="${SP1_PROVING_KEY:-/tmp/sp1.key}"
 export GROTH16_PARAMS="${GROTH16_PARAMS:-/tmp/groth16.params}"
+export RAYON_NUM_THREADS="${RAYON_NUM_THREADS:-1}"
 export SONAR_CONFIG_PATH="$CONFIG_PATH"
 export SONAR_CONFIG="$CONFIG_PATH"
 export SONAR_COORDINATOR_KEYPAIR_PATH="$wallet_path"
+export SONAR_DISABLE_REQUEST_POLLING="${SONAR_DISABLE_REQUEST_POLLING:-1}"
 
 log "Run directory: $RUN_ROOT"
 log "RPC URL: $RPC_URL"
@@ -458,24 +522,42 @@ log "Wallet: $wallet_path"
 log "Program ID: $PROGRAM_ID"
 log "Callback program ID: $CALLBACK_PROGRAM_ID"
 log "Computation: fibonacci(n=$FIB_N)"
+log "Local service profile: $SERVICE_PROFILE"
+log "Rayon threads: $RAYON_NUM_THREADS"
+if [[ "$SONAR_DISABLE_REQUEST_POLLING" =~ ^([Tt][Rr][Uu][Ee]|[Yy][Ee][Ss]|[Oo][Nn]|1)$ ]]; then
+  log "Request polling fallback: disabled"
+else
+  log "Request polling fallback: enabled"
+fi
+
+SERVICE_TARGET_DIR="$(service_target_dir)"
 
 if (( SKIP_BUILD == 0 )); then
   if (( RUN_DEPLOY == 0 )); then
     run_step "Building Anchor workspace for benchmark IDL/types" build_anchor_workspace
   fi
-  run_step "Building workspace binaries" cargo build --bins
+  run_step "Building local service binaries" build_service_binaries
 fi
 
 PROGRAM_ID="$(resolve_program_id "$ROOT_DIR/target/deploy/sonar_program-keypair.json" "$DEFAULT_PROGRAM_ID")"
 CALLBACK_PROGRAM_ID="$(resolve_program_id "$ROOT_DIR/target/deploy/echo_callback-keypair.json" "$DEFAULT_CALLBACK_PROGRAM_ID")"
 
 require_file "$ROOT_DIR/programs/fibonacci/elf/fibonacci-program"
+require_file "$ROOT_DIR/target/deploy/echo_callback.so"
+require_file "$ROOT_DIR/target/deploy/sonar_program.so"
 require_file "$ROOT_DIR/target/idl/sonar.json"
-require_file "$ROOT_DIR/target/debug/sonar-coordinator"
-require_file "$ROOT_DIR/target/debug/sonar-prover"
+require_file "$SERVICE_TARGET_DIR/sonar-coordinator"
+require_file "$SERVICE_TARGET_DIR/sonar-prover"
 
 if (( RUN_DEPLOY == 1 )); then
-  run_step "Deploying workspace to devnet" env NO_DNA="$NO_DNA" bash "$ROOT_DIR/scripts/deploy-devnet.sh"
+  if (( DRY_RUN == 1 || FORCE_DEPLOY == 1 )); then
+    run_step "Deploying workspace to devnet" env NO_DNA="$NO_DNA" bash "$ROOT_DIR/scripts/deploy-devnet.sh"
+  elif program_binary_matches_remote "$PROGRAM_ID" "$ROOT_DIR/target/deploy/sonar_program.so" "sonar_program" && \
+    program_binary_matches_remote "$CALLBACK_PROGRAM_ID" "$ROOT_DIR/target/deploy/echo_callback.so" "echo_callback"; then
+    log "Skipping deploy because the benchmark-required devnet programs already match local artifacts"
+  else
+    run_step "Deploying workspace to devnet" env NO_DNA="$NO_DNA" bash "$ROOT_DIR/scripts/deploy-devnet.sh"
+  fi
 fi
 
 ensure_fibonacci_verifier "$PROGRAM_ID" "$wallet_path"
@@ -495,13 +577,13 @@ wait_for_redis
 COORDINATOR_PID="$(start_background \
   "Starting local coordinator against devnet" \
   "$LOG_DIR/coordinator.log" \
-  env NO_DNA="$NO_DNA" "$ROOT_DIR/target/debug/sonar-coordinator")"
+  env NO_DNA="$NO_DNA" RUST_LOG="${RUST_LOG:-info,sonar_coordinator=debug}" "$SERVICE_TARGET_DIR/sonar-coordinator")"
 wait_for_process "$COORDINATOR_PID" "coordinator" "$LOG_DIR/coordinator.log"
 
 PROVER_PID="$(start_background \
   "Starting local prover against devnet" \
   "$LOG_DIR/prover.log" \
-  env NO_DNA="$NO_DNA" "$ROOT_DIR/target/debug/sonar-prover")"
+  env NO_DNA="$NO_DNA" "$SERVICE_TARGET_DIR/sonar-prover")"
 wait_for_process "$PROVER_PID" "prover" "$LOG_DIR/prover.log"
 
 if (( RUN_CU == 1 )); then

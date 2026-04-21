@@ -663,6 +663,12 @@ mod tests {
     }
 
     #[test]
+    fn parse_public_inputs_rejects_wrong_row_count() {
+        let err = parse_public_inputs::<2>(&[vec![7u8; 32]]).unwrap_err();
+        assert_eq!(err, error!(ErrorCode::InvalidPublicInputsLength));
+    }
+
+    #[test]
     fn parse_public_inputs_rejects_wrong_row_width() {
         let err = parse_public_inputs::<1>(&[vec![7u8; 31]]).unwrap_err();
         assert_eq!(err, error!(ErrorCode::InvalidPublicInputSize));

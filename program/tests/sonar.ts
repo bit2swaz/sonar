@@ -678,6 +678,26 @@ describe("Sonar ZK Coprocessor — Phase 2.3 Integration Tests", () => {
       }, "CallbackRemainingAccountSignerUnsupported");
     });
 
+    it("rejects request when callback remaining accounts exceed the cap", async () => {
+      const rid = randomId();
+      const [reqPda] = requestPDA(sonarProgramId, rid);
+      const [resPda] = resultPDA(sonarProgramId, rid);
+      const slot = await provider.connection.getSlot();
+      const tooManyRemainingAccounts = Array.from({ length: 17 }, () => ({
+        pubkey: SystemProgram.programId,
+        isSigner: false,
+        isWritable: false,
+      }));
+
+      await expectError(async () => {
+        await program.methods
+          .request({ requestId: Array.from(rid), computationId: Array.from(DEMO_COMPUTATION_ID), inputs: Buffer.alloc(0), deadline: new anchor.BN(slot + 5000), fee: new anchor.BN(100_000) })
+          .accounts({ payer: provider.wallet.publicKey, callbackProgram: echoCallbackId, requestMetadata: reqPda, resultAccount: resPda, systemProgram: SystemProgram.programId })
+          .remainingAccounts(tooManyRemainingAccounts)
+          .rpc();
+      }, "TooManyCallbackRemainingAccounts");
+    });
+
     it("rejects request with deadline in the past (DeadlinePassed)", async () => {
       const rid = randomId();
       const [reqPda] = requestPDA(sonarProgramId, rid);

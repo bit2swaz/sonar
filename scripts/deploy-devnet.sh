@@ -26,6 +26,10 @@ POLL_ATTEMPTS=15
 POLL_INTERVAL_SECONDS=2
 SONAR_SOLANA_BIN="$HOME/.local/share/solana/install/active_release/bin"
 DEFAULT_PRIVATE_DEVNET_RPC_URL="https://solana-devnet.core.chainstack.com/51a4443c8b33222e5327f331e007ec91"
+DEPLOY_BUFFER_CUSHION_LAMPORTS=50000000
+DEPLOY_MAX_SIGN_ATTEMPTS="${SONAR_DEPLOY_MAX_SIGN_ATTEMPTS:-25}"
+DEPLOY_TRANSPORT="${SONAR_DEPLOY_TRANSPORT:-rpc}"
+NO_DNA="${NO_DNA:-1}"
 
 if [[ -d "$SONAR_SOLANA_BIN" ]]; then
   export PATH="$SONAR_SOLANA_BIN:$PATH"
@@ -122,12 +126,73 @@ wait_for_balance() {
 }
 
 build_with_fallback() {
-  if anchor build; then
+  if env NO_DNA="$NO_DNA" anchor build; then
     return 0
   fi
 
   log "Default anchor build failed; retrying without IDL generation on Solana platform-tools v1.53"
-  anchor build --no-idl -- --tools-version v1.53
+  env NO_DNA="$NO_DNA" anchor build --no-idl -- --tools-version v1.53
+}
+
+rent_lamports_for_program_artifact() {
+  local artifact_path="$1"
+  local artifact_bytes
+  local rent_output
+  local rent_sol
+
+  artifact_bytes="$(wc -c < "$artifact_path")"
+  rent_output="$(solana rent "$artifact_bytes")"
+  rent_sol="$(printf '%s\n' "$rent_output" | awk '/Rent-exempt minimum:/ { print $3; exit }')"
+  [[ -n "$rent_sol" ]] || die "unable to parse rent-exempt minimum for $artifact_path"
+
+  python3 - "$rent_sol" <<'PY'
+from decimal import Decimal, ROUND_UP
+import sys
+
+rent_sol = Decimal(sys.argv[1])
+lamports = (rent_sol * Decimal("1000000000")).quantize(Decimal("1"), rounding=ROUND_UP)
+print(int(lamports))
+PY
+}
+
+largest_program_buffer_requirement() {
+  local artifact
+  local artifact_lamports
+  local largest_lamports=0
+  local largest_artifact=""
+
+  shopt -s nullglob
+  for artifact in "$REPO_ROOT"/target/deploy/*.so; do
+    artifact_lamports="$(rent_lamports_for_program_artifact "$artifact")"
+    if (( artifact_lamports > largest_lamports )); then
+      largest_lamports="$artifact_lamports"
+      largest_artifact="$artifact"
+    fi
+  done
+  shopt -u nullglob
+
+  [[ -n "$largest_artifact" ]] || die "no deployable program artifacts found under $REPO_ROOT/target/deploy"
+  printf '%s %s\n' "$largest_lamports" "$largest_artifact"
+}
+
+deploy_transport_args() {
+  case "$DEPLOY_TRANSPORT" in
+    rpc)
+      printf '%s\n' --use-rpc
+      ;;
+    quic)
+      printf '%s\n' --use-quic
+      ;;
+    tpu)
+      printf '%s\n' --use-tpu-client
+      ;;
+    udp)
+      printf '%s\n' --use-udp
+      ;;
+    *)
+      die "unsupported SONAR_DEPLOY_TRANSPORT: $DEPLOY_TRANSPORT"
+      ;;
+  esac
 }
 
 require_command awk
@@ -167,11 +232,19 @@ if (( current_balance_lamports < MIN_BALANCE_LAMPORTS )); then
   required_lamports=$(( MIN_BALANCE_LAMPORTS - current_balance_lamports ))
   required_sol="$(lamports_to_sol "$required_lamports")"
   log "Wallet balance below 2 SOL; requesting ${required_sol} SOL airdrop"
-  solana airdrop "$required_sol" "$wallet_pubkey" --url "$deploy_rpc_url" >/dev/null
+  if ! solana airdrop "$required_sol" "$wallet_pubkey" --url "$deploy_rpc_url" >/dev/null; then
+    die "wallet balance is only $(lamports_to_sol "$current_balance_lamports") SOL and the devnet airdrop request failed; fund $wallet_pubkey manually or retry once the faucet/rate limit clears"
+  fi
   current_balance_lamports="$(wait_for_balance "$wallet_pubkey" "$MIN_BALANCE_LAMPORTS" "$deploy_rpc_url")" || die "airdrop did not raise wallet balance to at least 2 SOL"
 fi
 
 log "Wallet balance: $(lamports_to_sol "$current_balance_lamports") SOL"
+
+read -r largest_buffer_lamports largest_buffer_artifact < <(largest_program_buffer_requirement)
+recommended_balance_lamports=$(( largest_buffer_lamports + DEPLOY_BUFFER_CUSHION_LAMPORTS ))
+if (( current_balance_lamports < recommended_balance_lamports )); then
+  die "wallet balance $(lamports_to_sol "$current_balance_lamports") SOL is below the recommended deploy floor $(lamports_to_sol "$recommended_balance_lamports") SOL; the largest workspace program buffer ($(basename "$largest_buffer_artifact")) requires about $(lamports_to_sol "$largest_buffer_lamports") SOL before transaction fees"
+fi
 
 if [[ -n "$current_devnet_program_id" && -n "$program_pubkey" && "$current_devnet_program_id" != "$program_pubkey" ]]; then
   log "WARNING: Anchor.toml devnet program ID ($current_devnet_program_id) does not match target/deploy/sonar_program-keypair.json ($program_pubkey)"
@@ -179,13 +252,14 @@ if [[ -n "$current_devnet_program_id" && -n "$program_pubkey" && "$current_devne
 fi
 
 log "Synchronizing Anchor program keys"
-anchor keys sync
+env NO_DNA="$NO_DNA" anchor keys sync
 
 log "Building Anchor workspace"
 build_with_fallback
 
 log "Deploying Anchor workspace to devnet"
-anchor deploy --provider.cluster "$deploy_rpc_url"
+log "Using deploy transport '$DEPLOY_TRANSPORT' with max sign attempts $DEPLOY_MAX_SIGN_ATTEMPTS"
+env NO_DNA="$NO_DNA" anchor deploy --provider.cluster "$deploy_rpc_url" --provider.wallet "$ANCHOR_WALLET" -- --max-sign-attempts "$DEPLOY_MAX_SIGN_ATTEMPTS" "$(deploy_transport_args)"
 
 if [[ -n "$program_pubkey" ]]; then
   log "Verifying deployed program account $program_pubkey"

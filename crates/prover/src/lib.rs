@@ -120,7 +120,8 @@ mod tests {
         groth16_wrapper::{extract_sp1_groth16_payload, wrap_stark_to_groth16},
         registry::{FIBONACCI_ELF_PATH, HISTORICAL_AVG_ELF_PATH},
         sp1_wrapper::{
-            load_proof_bundle, run_historical_avg_program, run_sp1_program, Sp1ProofBundle,
+            available_ram_bytes, load_proof_bundle, run_historical_avg_program, run_sp1_program,
+            Sp1ProofBundle, MIN_FREE_RAM_FOR_GROTH16,
         },
     };
 
@@ -377,6 +378,22 @@ mod tests {
     #[test]
     #[ignore = "expensive real SP1 proving"]
     fn test_extract_sp1_groth16_payload_matches_real_sp1_shape_live_smoke() {
+        // gnark Groth16 needs the R1CS (~1.5 GB) + proving key (~2.5 GB) + MSM working memory
+        // (~0.5 GB with GOMAXPROCS=1) = ~4.5 GB for gnark alone, plus the STARK recursion steps
+        // before it.  Refuse to proceed if the machine doesn't have enough headroom so we fail
+        // fast with a clear message instead of being OOM-killed.
+        if let Some(avail) = available_ram_bytes() {
+            if avail < MIN_FREE_RAM_FOR_GROTH16 {
+                eprintln!(
+                    "SKIP: real Groth16 smoke test requires ≥{:.0} GB free RAM; \
+                     only {:.1} GB available. Add swap or run on a larger machine.",
+                    MIN_FREE_RAM_FOR_GROTH16 as f64 / 1e9,
+                    avail as f64 / 1e9,
+                );
+                return;
+            }
+        }
+
         let _guard = SP1_ENV_LOCK
             .lock()
             .expect("SP1 env lock should not be poisoned");

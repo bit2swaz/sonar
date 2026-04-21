@@ -319,6 +319,26 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function isTransientRpcError(error: unknown): boolean {
+  const message = errorMessage(error).toLowerCase();
+  return (
+    message.includes("fetch failed") ||
+    message.includes("network request failed") ||
+    message.includes("socket hang up") ||
+    message.includes("econnreset") ||
+    message.includes("etimedout") ||
+    message.includes("eai_again") ||
+    message.includes("429") ||
+    message.includes("too many requests") ||
+    message.includes("503") ||
+    message.includes("service unavailable")
+  );
+}
+
 function requestPda(programId: PublicKey, requestId: Buffer): PublicKey {
   return PublicKey.findProgramAddressSync([Buffer.from("request"), requestId], programId)[0];
 }
@@ -397,12 +417,23 @@ async function waitForCallbackCompletion(
 ): Promise<void> {
   const deadlineAt = Date.now() + timeoutSeconds * 1000;
   let lastSeenWrittenAt: string | undefined;
+  let lastTransientRpcError: string | undefined;
 
   while (Date.now() < deadlineAt) {
-    const accountInfo = await program.provider.connection.getAccountInfo(
-      resultAccount,
-      DEFAULT_COMMITMENT
-    );
+    let accountInfo;
+    try {
+      accountInfo = await program.provider.connection.getAccountInfo(
+        resultAccount,
+        DEFAULT_COMMITMENT
+      );
+    } catch (error: unknown) {
+      if (isTransientRpcError(error)) {
+        lastTransientRpcError = errorMessage(error);
+        await sleep(pollIntervalMs);
+        continue;
+      }
+      throw error;
+    }
 
     if (accountInfo === null) {
       return;
@@ -419,7 +450,12 @@ async function waitForCallbackCompletion(
         return;
       }
     } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = errorMessage(error);
+      if (isTransientRpcError(error)) {
+        lastTransientRpcError = message;
+        await sleep(pollIntervalMs);
+        continue;
+      }
       if (
         !message.includes("Account does not exist") &&
         !message.includes("Account not found") &&
@@ -432,7 +468,14 @@ async function waitForCallbackCompletion(
     await sleep(pollIntervalMs);
   }
 
-  const suffix = lastSeenWrittenAt ? ` last_written_at=${lastSeenWrittenAt}` : "";
+  const suffixParts: string[] = [];
+  if (lastSeenWrittenAt) {
+    suffixParts.push(`last_written_at=${lastSeenWrittenAt}`);
+  }
+  if (lastTransientRpcError) {
+    suffixParts.push(`last_rpc_error=${JSON.stringify(lastTransientRpcError)}`);
+  }
+  const suffix = suffixParts.length > 0 ? ` ${suffixParts.join(" ")}` : "";
   throw new Error(
     `${label} timed out waiting ${timeoutSeconds}s for callback completion on ${resultAccount.toBase58()}.${suffix}`
   );
@@ -445,19 +488,33 @@ async function fetchTransactionWithRetry(
   pollIntervalMs: number
 ): Promise<VersionedTransactionResponse> {
   const deadlineAt = Date.now() + timeoutSeconds * 1000;
+  let lastTransientRpcError: string | undefined;
 
   while (Date.now() < deadlineAt) {
-    const transaction = await connection.getTransaction(signature, {
-      commitment: DEFAULT_FINALITY,
-      maxSupportedTransactionVersion: 0,
-    });
+    let transaction: VersionedTransactionResponse | null;
+    try {
+      transaction = await connection.getTransaction(signature, {
+        commitment: DEFAULT_FINALITY,
+        maxSupportedTransactionVersion: 0,
+      });
+    } catch (error: unknown) {
+      if (isTransientRpcError(error)) {
+        lastTransientRpcError = errorMessage(error);
+        await sleep(pollIntervalMs);
+        continue;
+      }
+      throw error;
+    }
     if (transaction !== null) {
       return transaction;
     }
     await sleep(pollIntervalMs);
   }
 
-  throw new Error(`timed out waiting for transaction details for ${signature}`);
+  const suffix = lastTransientRpcError
+    ? ` last_rpc_error=${JSON.stringify(lastTransientRpcError)}`
+    : "";
+  throw new Error(`timed out waiting for transaction details for ${signature}.${suffix}`);
 }
 
 async function submitRequest(
@@ -580,13 +637,24 @@ async function findCallbackTransaction(
 ): Promise<CallbackTransactionMatch> {
   const deadlineAt = Date.now() + timeoutSeconds * 1000;
   const seenSignatures = new Set<string>();
+  let lastTransientRpcError: string | undefined;
 
   while (Date.now() < deadlineAt) {
-    const signatures = await connection.getSignaturesForAddress(
-      resultAccount,
-      { limit: signatureScanLimit },
-      DEFAULT_FINALITY
-    );
+    let signatures;
+    try {
+      signatures = await connection.getSignaturesForAddress(
+        resultAccount,
+        { limit: signatureScanLimit },
+        DEFAULT_FINALITY
+      );
+    } catch (error: unknown) {
+      if (isTransientRpcError(error)) {
+        lastTransientRpcError = errorMessage(error);
+        await sleep(pollIntervalMs);
+        continue;
+      }
+      throw error;
+    }
 
     for (const signatureInfo of signatures) {
       if (signatureInfo.signature === requestSignature || signatureInfo.slot < minSlot) {
@@ -597,10 +665,19 @@ async function findCallbackTransaction(
       }
       seenSignatures.add(signatureInfo.signature);
 
-      const transaction = await connection.getTransaction(signatureInfo.signature, {
-        commitment: DEFAULT_FINALITY,
-        maxSupportedTransactionVersion: 0,
-      });
+      let transaction: VersionedTransactionResponse | null;
+      try {
+        transaction = await connection.getTransaction(signatureInfo.signature, {
+          commitment: DEFAULT_FINALITY,
+          maxSupportedTransactionVersion: 0,
+        });
+      } catch (error: unknown) {
+        if (isTransientRpcError(error)) {
+          lastTransientRpcError = errorMessage(error);
+          continue;
+        }
+        throw error;
+      }
       if (transaction === null || transaction.meta?.err) {
         continue;
       }
@@ -614,8 +691,11 @@ async function findCallbackTransaction(
     await sleep(pollIntervalMs);
   }
 
+  const suffix = lastTransientRpcError
+    ? ` last_rpc_error=${JSON.stringify(lastTransientRpcError)}`
+    : "";
   throw new Error(
-    `timed out waiting ${timeoutSeconds}s to locate a callback transaction touching ${resultAccount.toBase58()}`
+    `timed out waiting ${timeoutSeconds}s to locate a callback transaction touching ${resultAccount.toBase58()}.${suffix}`
   );
 }
 

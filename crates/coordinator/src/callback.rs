@@ -380,7 +380,29 @@ pub async fn run_callback_worker(
         )
         .await
         {
-            error!("process_response failed: {e:#}");
+            let formatted_error = format!("{e:#}");
+            match dispatcher::push_failed_response(
+                &mut redis_conn,
+                dispatcher::FAILED_RESPONSES_QUEUE,
+                &response,
+                &formatted_error,
+            )
+            .await
+            {
+                Ok(()) => {
+                    error!(
+                        request_id = %hex_encode(&response.request_id),
+                        failed_queue = dispatcher::FAILED_RESPONSES_QUEUE,
+                        "process_response failed and was moved to the dead-letter queue: {formatted_error}"
+                    );
+                },
+                Err(dead_letter_error) => {
+                    error!(
+                        request_id = %hex_encode(&response.request_id),
+                        "process_response failed: {formatted_error}; dead-letter push also failed: {dead_letter_error:#}"
+                    );
+                },
+            }
         }
     }
 

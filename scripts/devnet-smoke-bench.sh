@@ -641,11 +641,15 @@ PROGRAM_ID="$(resolve_program_id "$ROOT_DIR/target/deploy/sonar_program-keypair.
 CALLBACK_PROGRAM_ID="$(resolve_program_id "$ROOT_DIR/target/deploy/echo_callback-keypair.json" "$DEFAULT_CALLBACK_PROGRAM_ID")"
 
 require_file "$ROOT_DIR/programs/fibonacci/elf/fibonacci-program"
-require_file "$ROOT_DIR/target/deploy/echo_callback.so"
-require_file "$ROOT_DIR/target/deploy/sonar_program.so"
-require_file "$ROOT_DIR/target/idl/sonar.json"
-require_file "$SERVICE_TARGET_DIR/sonar-coordinator"
-require_file "$SERVICE_TARGET_DIR/sonar-prover"
+if (( DRY_RUN == 0 )); then
+  require_file "$ROOT_DIR/target/deploy/echo_callback.so"
+  require_file "$ROOT_DIR/target/deploy/sonar_program.so"
+  require_file "$ROOT_DIR/target/idl/sonar.json"
+  require_file "$SERVICE_TARGET_DIR/sonar-coordinator"
+  require_file "$SERVICE_TARGET_DIR/sonar-prover"
+else
+  log "Dry-run: skipping built artifact existence checks"
+fi
 
 if (( RUN_DEPLOY == 1 )); then
   if (( DRY_RUN == 1 || FORCE_DEPLOY == 1 )); then

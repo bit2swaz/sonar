@@ -35,6 +35,8 @@ DEFAULT_POLL_INTERVAL_MS=2000
 DEFAULT_PROGRAM_ID="Gf7RSZYmfNJ5kv2AJvcv5rjCANP6ePExJR19D91MECLY"
 DEFAULT_CALLBACK_PROGRAM_ID="J7jsJVQz6xbWFhyxRbzk7nH5ALhStztUNR1nPupnyjxS"
 DEFAULT_SERVICE_PROFILE="release"
+DEFAULT_ESTIMATED_REQUEST_COST_LAMPORTS=75000000
+DEFAULT_BENCHMARK_BALANCE_CUSHION_LAMPORTS=500000000
 REDIS_CONTAINER_NAME="sonar-devnet-smoke-redis"
 NO_DNA="${NO_DNA:-1}"
 
@@ -48,12 +50,15 @@ KEEP_SERVICES=0
 SKIP_BUILD=0
 DRY_RUN=0
 FORCE_DEPLOY=0
+ALLOW_LOW_BALANCE="${SONAR_ALLOW_LOW_BENCHMARK_BALANCE:-0}"
 
 RPC_URL="${SOLANA_RPC_URL:-$DEFAULT_RPC_URL}"
 WS_URL="${SOLANA_WS_URL:-$DEFAULT_WS_URL}"
 REDIS_PORT="${REDIS_PORT:-$DEFAULT_REDIS_PORT}"
 CONFIG_PATH="${SONAR_DEVNET_SMOKE_CONFIG:-$DEFAULT_CONFIG_PATH}"
 SERVICE_PROFILE="${SONAR_DEVNET_SMOKE_SERVICE_PROFILE:-$DEFAULT_SERVICE_PROFILE}"
+ESTIMATED_REQUEST_COST_LAMPORTS="${SONAR_BENCHMARK_ESTIMATED_REQUEST_COST_LAMPORTS:-$DEFAULT_ESTIMATED_REQUEST_COST_LAMPORTS}"
+BENCHMARK_BALANCE_CUSHION_LAMPORTS="${SONAR_BENCHMARK_BALANCE_CUSHION_LAMPORTS:-$DEFAULT_BENCHMARK_BALANCE_CUSHION_LAMPORTS}"
 FIB_N="$DEFAULT_FIB_N"
 LOAD_REQUESTS="$DEFAULT_LOAD_REQUESTS"
 THROUGHPUT_TPS="$DEFAULT_THROUGHPUT_TPS"
@@ -109,7 +114,31 @@ Notes:
     script does not provision.
   - Running with deploy enabled will send devnet transactions and may request
     an airdrop through scripts/deploy-devnet.sh.
+  - The wrapper estimates required wallet balance from the enabled benchmark
+    workload using SONAR_BENCHMARK_ESTIMATED_REQUEST_COST_LAMPORTS
+    (default: $DEFAULT_ESTIMATED_REQUEST_COST_LAMPORTS lamports/request).
 EOF
+}
+
+lamports_to_sol() {
+  python3 - "$1" <<'PY'
+from decimal import Decimal
+import sys
+
+lamports = Decimal(sys.argv[1])
+print(f"{lamports / Decimal('1000000000'):.9f}")
+PY
+}
+
+ceil_decimal_product() {
+  python3 - "$1" "$2" <<'PY'
+from decimal import Decimal, ROUND_CEILING
+import sys
+
+left = Decimal(sys.argv[1])
+right = Decimal(sys.argv[2])
+print(int((left * right).to_integral_value(rounding=ROUND_CEILING)))
+PY
 }
 
 service_target_dir() {
@@ -146,6 +175,72 @@ require_command() {
 
 require_file() {
   [[ -f "$1" ]] || die "missing required file: $1"
+}
+
+wallet_balance_lamports() {
+  local wallet_path="$1"
+  local wallet_pubkey
+
+  wallet_pubkey="$(solana-keygen pubkey "$wallet_path")"
+  solana balance "$wallet_pubkey" --url "$RPC_URL" --lamports | awk 'NR==1 { print $1 }'
+}
+
+estimated_benchmark_request_count() {
+  local total=0
+  local throughput_requests=0
+
+  if (( RUN_CU == 1 )); then
+    total=$(( total + 1 ))
+  fi
+
+  if (( RUN_COLD_WARM == 1 )); then
+    total=$(( total + 11 ))
+  fi
+
+  if (( RUN_LOAD == 1 )); then
+    total=$(( total + LOAD_REQUESTS ))
+  fi
+
+  if (( RUN_THROUGHPUT == 1 )); then
+    throughput_requests="$(ceil_decimal_product "$THROUGHPUT_TPS" "$THROUGHPUT_DURATION")"
+    total=$(( total + throughput_requests ))
+  fi
+
+  printf '%s\n' "$total"
+}
+
+check_benchmark_wallet_balance() {
+  local wallet_path="$1"
+  local request_count
+  local required_lamports
+  local current_balance_lamports
+
+  request_count="$(estimated_benchmark_request_count)"
+  if (( request_count == 0 )); then
+    log "Skipping wallet benchmark-floor check because all request-producing benchmark legs are disabled"
+    return 0
+  fi
+
+  required_lamports=$(( request_count * ESTIMATED_REQUEST_COST_LAMPORTS + BENCHMARK_BALANCE_CUSHION_LAMPORTS ))
+
+  if (( DRY_RUN == 1 )); then
+    log "Dry-run: benchmark floor would require about $(lamports_to_sol "$required_lamports") SOL for ${request_count} request(s)"
+    return 0
+  fi
+
+  current_balance_lamports="$(wallet_balance_lamports "$wallet_path")"
+  [[ -n "$current_balance_lamports" ]] || die "failed to fetch wallet balance for benchmark preflight"
+
+  if (( current_balance_lamports < required_lamports )); then
+    if [[ "$ALLOW_LOW_BALANCE" =~ ^([Tt][Rr][Uu][Ee]|[Yy][Ee][Ss]|[Oo][Nn]|1)$ ]]; then
+      log "WARNING: wallet balance $(lamports_to_sol "$current_balance_lamports") SOL is below the estimated benchmark floor $(lamports_to_sol "$required_lamports") SOL for ${request_count} request(s); continuing because SONAR_ALLOW_LOW_BENCHMARK_BALANCE=$ALLOW_LOW_BALANCE"
+      return 0
+    fi
+
+    die "wallet balance $(lamports_to_sol "$current_balance_lamports") SOL is below the estimated benchmark floor $(lamports_to_sol "$required_lamports") SOL for ${request_count} request(s). Lower --load-requests/--throughput-* or override SONAR_BENCHMARK_ESTIMATED_REQUEST_COST_LAMPORTS / SONAR_BENCHMARK_BALANCE_CUSHION_LAMPORTS / SONAR_ALLOW_LOW_BENCHMARK_BALANCE=1 if you intentionally want to proceed."
+  fi
+
+  log "Wallet benchmark-floor check passed: $(lamports_to_sol "$current_balance_lamports") SOL available for an estimated ${request_count}-request workload"
 }
 
 program_binary_matches_remote() {
@@ -482,6 +577,7 @@ require_command cargo
 require_command docker
 require_command node
 require_command npx
+require_command python3
 require_command sha256sum
 require_command solana
 require_command solana-keygen
@@ -524,6 +620,8 @@ log "Callback program ID: $CALLBACK_PROGRAM_ID"
 log "Computation: fibonacci(n=$FIB_N)"
 log "Local service profile: $SERVICE_PROFILE"
 log "Rayon threads: $RAYON_NUM_THREADS"
+log "Estimated request cost floor: ${ESTIMATED_REQUEST_COST_LAMPORTS} lamports/request"
+log "Benchmark balance cushion: ${BENCHMARK_BALANCE_CUSHION_LAMPORTS} lamports"
 if [[ "$SONAR_DISABLE_REQUEST_POLLING" =~ ^([Tt][Rr][Uu][Ee]|[Yy][Ee][Ss]|[Oo][Nn]|1)$ ]]; then
   log "Request polling fallback: disabled"
 else
@@ -561,6 +659,7 @@ if (( RUN_DEPLOY == 1 )); then
 fi
 
 ensure_fibonacci_verifier "$PROGRAM_ID" "$wallet_path"
+check_benchmark_wallet_balance "$wallet_path"
 
 if (( DRY_RUN == 1 )); then
   log "Resetting local redis container"

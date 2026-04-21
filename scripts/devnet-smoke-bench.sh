@@ -50,6 +50,7 @@ KEEP_SERVICES=0
 SKIP_BUILD=0
 DRY_RUN=0
 FORCE_DEPLOY=0
+USE_LOCAL_SERVICES=1
 ALLOW_LOW_BALANCE="${SONAR_ALLOW_LOW_BENCHMARK_BALANCE:-0}"
 
 RPC_URL="${SOLANA_RPC_URL:-$DEFAULT_RPC_URL}"
@@ -91,6 +92,7 @@ Options:
   --skip-build                Skip local cargo/anchor builds
   --force-deploy              Run deploy even if required devnet programs already match local artifacts
   --keep-services             Leave local redis/coordinator/prover running after exit
+  --external-services         Skip local redis/coordinator/prover startup and assume external services are already running
   --dry-run                   Print the planned steps without executing them
   --rpc-url <url>             Solana RPC URL (default: $DEFAULT_RPC_URL)
   --ws-url <url>              Solana WebSocket URL (default: $DEFAULT_WS_URL)
@@ -112,6 +114,8 @@ Notes:
   - This wrapper intentionally defaults to fibonacci because remote devnet
     historical_avg still depends on indexed account-history data that this
     script does not provision.
+  - --external-services is for running the benchmark driver locally while
+    Redis/coordinator/prover run elsewhere against the same devnet deployment.
   - Running with deploy enabled will send devnet transactions and may request
     an airdrop through scripts/deploy-devnet.sh.
   - The wrapper estimates required wallet balance from the enabled benchmark
@@ -513,6 +517,10 @@ while (( $# > 0 )); do
       KEEP_SERVICES=1
       shift
       ;;
+    --external-services)
+      USE_LOCAL_SERVICES=0
+      shift
+      ;;
     --dry-run)
       DRY_RUN=1
       shift
@@ -574,7 +582,9 @@ done
 require_command awk
 require_command anchor
 require_command cargo
-require_command docker
+if (( USE_LOCAL_SERVICES == 1 )); then
+  require_command docker
+fi
 require_command node
 require_command npx
 require_command python3
@@ -602,7 +612,9 @@ export SOLANA_WS_URL="$WS_URL"
 export HELIUS_RPC_URL="${HELIUS_RPC_URL:-$RPC_URL}"
 export HELIUS_API_KEY="${HELIUS_API_KEY:-devnet-smoke}"
 export DATABASE_URL="${DATABASE_URL:-postgresql://unused:unused@127.0.0.1:15432/unused}"
-export REDIS_URL="redis://127.0.0.1:${REDIS_PORT}"
+if (( USE_LOCAL_SERVICES == 1 )); then
+  export REDIS_URL="${REDIS_URL:-redis://127.0.0.1:${REDIS_PORT}}"
+fi
 export SP1_PROVING_KEY="${SP1_PROVING_KEY:-/tmp/sp1.key}"
 export GROTH16_PARAMS="${GROTH16_PARAMS:-/tmp/groth16.params}"
 export RAYON_NUM_THREADS="${RAYON_NUM_THREADS:-1}"
@@ -619,6 +631,11 @@ log "Program ID: $PROGRAM_ID"
 log "Callback program ID: $CALLBACK_PROGRAM_ID"
 log "Computation: fibonacci(n=$FIB_N)"
 log "Local service profile: $SERVICE_PROFILE"
+if (( USE_LOCAL_SERVICES == 1 )); then
+  log "Service mode: local redis/coordinator/prover"
+else
+  log "Service mode: external redis/coordinator/prover"
+fi
 log "Rayon threads: $RAYON_NUM_THREADS"
 log "Estimated request cost floor: ${ESTIMATED_REQUEST_COST_LAMPORTS} lamports/request"
 log "Benchmark balance cushion: ${BENCHMARK_BALANCE_CUSHION_LAMPORTS} lamports"
@@ -634,7 +651,9 @@ if (( SKIP_BUILD == 0 )); then
   if (( RUN_DEPLOY == 0 )); then
     run_step "Building Anchor workspace for benchmark IDL/types" build_anchor_workspace
   fi
-  run_step "Building local service binaries" build_service_binaries
+  if (( USE_LOCAL_SERVICES == 1 )); then
+    run_step "Building local service binaries" build_service_binaries
+  fi
 fi
 
 PROGRAM_ID="$(resolve_program_id "$ROOT_DIR/target/deploy/sonar_program-keypair.json" "$DEFAULT_PROGRAM_ID")"
@@ -645,8 +664,10 @@ if (( DRY_RUN == 0 )); then
   require_file "$ROOT_DIR/target/deploy/echo_callback.so"
   require_file "$ROOT_DIR/target/deploy/sonar_program.so"
   require_file "$ROOT_DIR/target/idl/sonar.json"
-  require_file "$SERVICE_TARGET_DIR/sonar-coordinator"
-  require_file "$SERVICE_TARGET_DIR/sonar-prover"
+  if (( USE_LOCAL_SERVICES == 1 )); then
+    require_file "$SERVICE_TARGET_DIR/sonar-coordinator"
+    require_file "$SERVICE_TARGET_DIR/sonar-prover"
+  fi
 else
   log "Dry-run: skipping built artifact existence checks"
 fi
@@ -665,29 +686,33 @@ fi
 ensure_fibonacci_verifier "$PROGRAM_ID" "$wallet_path"
 check_benchmark_wallet_balance "$wallet_path"
 
-if (( DRY_RUN == 1 )); then
-  log "Resetting local redis container"
-  printf '  docker rm -f %q >/dev/null 2>&1 || true\n' "$REDIS_CONTAINER_NAME"
+if (( USE_LOCAL_SERVICES == 1 )); then
+  if (( DRY_RUN == 1 )); then
+    log "Resetting local redis container"
+    printf '  docker rm -f %q >/dev/null 2>&1 || true\n' "$REDIS_CONTAINER_NAME"
+  else
+    log "Resetting local redis container"
+    docker rm -f "$REDIS_CONTAINER_NAME" >/dev/null 2>&1 || true
+  fi
+  run_step \
+    "Starting local redis for coordinator/prover" \
+    docker run -d --name "$REDIS_CONTAINER_NAME" -p "${REDIS_PORT}:6379" redis:7-alpine
+  wait_for_redis
+
+  COORDINATOR_PID="$(start_background \
+    "Starting local coordinator against devnet" \
+    "$LOG_DIR/coordinator.log" \
+    env NO_DNA="$NO_DNA" RUST_LOG="${RUST_LOG:-info,sonar_coordinator=debug}" "$SERVICE_TARGET_DIR/sonar-coordinator")"
+  wait_for_process "$COORDINATOR_PID" "coordinator" "$LOG_DIR/coordinator.log"
+
+  PROVER_PID="$(start_background \
+    "Starting local prover against devnet" \
+    "$LOG_DIR/prover.log" \
+    env NO_DNA="$NO_DNA" "$SERVICE_TARGET_DIR/sonar-prover")"
+  wait_for_process "$PROVER_PID" "prover" "$LOG_DIR/prover.log"
 else
-  log "Resetting local redis container"
-  docker rm -f "$REDIS_CONTAINER_NAME" >/dev/null 2>&1 || true
+  log "Skipping local redis/coordinator/prover startup; expecting external services to handle callbacks"
 fi
-run_step \
-  "Starting local redis for coordinator/prover" \
-  docker run -d --name "$REDIS_CONTAINER_NAME" -p "${REDIS_PORT}:6379" redis:7-alpine
-wait_for_redis
-
-COORDINATOR_PID="$(start_background \
-  "Starting local coordinator against devnet" \
-  "$LOG_DIR/coordinator.log" \
-  env NO_DNA="$NO_DNA" RUST_LOG="${RUST_LOG:-info,sonar_coordinator=debug}" "$SERVICE_TARGET_DIR/sonar-coordinator")"
-wait_for_process "$COORDINATOR_PID" "coordinator" "$LOG_DIR/coordinator.log"
-
-PROVER_PID="$(start_background \
-  "Starting local prover against devnet" \
-  "$LOG_DIR/prover.log" \
-  env NO_DNA="$NO_DNA" "$SERVICE_TARGET_DIR/sonar-prover")"
-wait_for_process "$PROVER_PID" "prover" "$LOG_DIR/prover.log"
 
 if (( RUN_CU == 1 )); then
   run_step \

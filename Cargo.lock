@@ -12395,6 +12395,7 @@ dependencies = [
  "futures-util",
  "redis",
  "reqwest",
+ "serde",
  "serde_json",
  "solana-client",
  "solana-sdk",

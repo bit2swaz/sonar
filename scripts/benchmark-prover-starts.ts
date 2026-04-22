@@ -367,6 +367,8 @@ async function waitForCallbackCompletion(
   label: string
 ): Promise<void> {
   const deadlineAt = Date.now() + timeoutSeconds * 1000;
+  const startedAt = Date.now();
+  let nextProgressLogAt = startedAt + 60_000;
   let lastSeenWrittenAt: string | undefined;
   let lastTransientRpcError: string | undefined;
 
@@ -388,6 +390,13 @@ async function waitForCallbackCompletion(
 
     if (accountInfo === null) {
       return;
+    }
+
+    if (Date.now() >= nextProgressLogAt) {
+      console.log(
+        `${label} still waiting for callback completion after ${Math.floor((Date.now() - startedAt) / 1000)}s on ${resultAccount.toBase58()}`
+      );
+      nextProgressLogAt = Date.now() + 60_000;
     }
 
     try {

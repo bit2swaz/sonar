@@ -2,6 +2,7 @@ use std::{
     collections::HashMap,
     fs,
     path::{Path, PathBuf},
+    process::Command,
     sync::{Arc, Mutex, OnceLock},
 };
 
@@ -52,9 +53,11 @@ const DEFAULT_SP1_WORKER_DEFERRED_BUFFER_SIZE: &str = "1";
 /// key (~2.5 GB), and MSM working memory (~0.5 GB with GOMAXPROCS=1) simultaneously, on top of
 /// the recursion steps before it. ~8 GiB is the minimum practical threshold.
 pub(crate) const MIN_FREE_RAM_FOR_GROTH16: u64 = 8 * 1024 * 1024 * 1024;
+pub(crate) const MIN_CUDA_GPU_MEMORY_BYTES: u64 = 24 * 1024 * 1024 * 1024;
 
 const LOW_MEMORY_GROTH16_OVERRIDE_ENV: &str = "SONAR_ALLOW_LOW_MEMORY_GROTH16";
 const SP1_CIRCUITS_DIR_OVERRIDE_ENV: &str = "SONAR_SP1_CIRCUITS_DIR";
+const SP1_GPU_SERVER_PATH_OVERRIDE_ENV: &str = "SONAR_SP1_GPU_SERVER_PATH";
 const REQUIRED_GROTH16_ARTIFACT_FILES: &[&str] = &[
     "groth16_circuit.bin",
     "groth16_pk.bin",
@@ -576,6 +579,13 @@ pub(crate) fn preflight_selected_prover_backend() -> anyhow::Result<()> {
         }
     }
 
+    if using_local_cuda_prover() {
+        ensure_local_cuda_server_runtime_ready()?;
+        if let Some(total_memory_bytes) = detected_cuda_gpu_memory_bytes()? {
+            ensure_local_cuda_gpu_memory_headroom(total_memory_bytes)?;
+        }
+    }
+
     if using_local_real_prover() {
         ensure_local_groth16_artifact_cache_ready()?;
     }
@@ -590,11 +600,17 @@ fn using_local_cpu_prover() -> bool {
         .unwrap_or(false)
 }
 
-    fn using_local_real_prover() -> bool {
-        std::env::var("SP1_PROVER")
+fn using_local_cuda_prover() -> bool {
+    std::env::var("SP1_PROVER")
+        .map(|value| value.eq_ignore_ascii_case("cuda"))
+        .unwrap_or(false)
+}
+
+fn using_local_real_prover() -> bool {
+    std::env::var("SP1_PROVER")
         .map(|value| matches!(value.to_ascii_lowercase().as_str(), "cpu" | "cuda"))
         .unwrap_or(false)
-    }
+}
 
 fn allow_low_memory_groth16_override() -> bool {
     std::env::var(LOW_MEMORY_GROTH16_OVERRIDE_ENV)
@@ -623,6 +639,76 @@ fn ensure_local_cpu_groth16_headroom(
         bytes_to_gib(headroom),
         bytes_to_gib(MIN_FREE_RAM_FOR_GROTH16),
         LOW_MEMORY_GROTH16_OVERRIDE_ENV,
+    ))
+}
+
+fn ensure_local_cuda_gpu_memory_headroom(total_memory_bytes: u64) -> anyhow::Result<()> {
+    if total_memory_bytes >= MIN_CUDA_GPU_MEMORY_BYTES {
+        return Ok(());
+    }
+
+    Err(anyhow!(
+        "insufficient GPU memory for SP1 CUDA proving: {:.1} GiB total VRAM detected, need at least {:.1} GiB. This laptop GPU cannot run the full SP1 CUDA prover; use a >=24 GiB GPU, a remote prover, or stay on the CPU path.",
+        bytes_to_gib(total_memory_bytes),
+        bytes_to_gib(MIN_CUDA_GPU_MEMORY_BYTES),
+    ))
+}
+
+fn detected_cuda_gpu_memory_bytes() -> anyhow::Result<Option<u64>> {
+    let output = match Command::new("nvidia-smi")
+        .args([
+            "--query-gpu=index,memory.total",
+            "--format=csv,noheader,nounits",
+        ])
+        .output()
+    {
+        Ok(output) => output,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(anyhow!("failed to execute nvidia-smi while checking CUDA GPU memory: {error}"))
+        }
+    };
+
+    if !output.status.success() {
+        let diagnostics = command_output_diagnostics(&output.stdout, &output.stderr);
+        return Err(anyhow!(
+            "nvidia-smi failed while checking CUDA GPU memory (status: {}): {}",
+            output.status,
+            diagnostics,
+        ));
+    }
+
+    Ok(parse_nvidia_smi_memory_total_bytes(&output.stdout))
+}
+
+fn ensure_local_cuda_server_runtime_ready() -> anyhow::Result<()> {
+    let server_path = local_cuda_server_path()?;
+    if !server_path.exists() {
+        return Ok(());
+    }
+
+    let output = Command::new(&server_path)
+        .arg("--version")
+        .output()
+        .with_context(|| format!("failed to execute SP1 CUDA server at {}", server_path.display()))?;
+
+    if output.status.success() {
+        return Ok(());
+    }
+
+    let diagnostics = command_output_diagnostics(&output.stdout, &output.stderr);
+    let runtime_hint = if diagnostics.contains("libcudart.so.12") {
+        " The cached SP1 CUDA server is linked against CUDA 12, but this host does not expose libcudart.so.12. Rebuild it locally with `cargo install --locked --force --root \"$HOME/.sp1\" sp1-gpu-server@6.0.2`, or install a CUDA 12 compatibility runtime."
+    } else {
+        ""
+    };
+
+    Err(anyhow!(
+        "SP1 CUDA server is not runnable at {} (status: {}).{} Diagnostics: {}",
+        server_path.display(),
+        output.status,
+        runtime_hint,
+        diagnostics,
     ))
 }
 
@@ -664,6 +750,34 @@ fn local_groth16_artifact_dir() -> anyhow::Result<PathBuf> {
     Ok(circuits_root
         .join("groth16")
         .join(SP1_CIRCUIT_VERSION.to_string()))
+}
+
+fn local_cuda_server_path() -> anyhow::Result<PathBuf> {
+    if let Some(path) = std::env::var_os(SP1_GPU_SERVER_PATH_OVERRIDE_ENV) {
+        return Ok(PathBuf::from(path));
+    }
+
+    let home = std::env::var_os("HOME")
+        .ok_or_else(|| anyhow!("HOME is not set; cannot locate the SP1 GPU server binary"))?;
+    Ok(PathBuf::from(home).join(".sp1").join("bin").join("sp1-gpu-server"))
+}
+
+fn command_output_diagnostics(stdout: &[u8], stderr: &[u8]) -> String {
+    let stdout = String::from_utf8_lossy(stdout).trim().to_string();
+    let stderr = String::from_utf8_lossy(stderr).trim().to_string();
+
+    match (stdout.is_empty(), stderr.is_empty()) {
+        (false, false) => format!("stdout: {stdout}; stderr: {stderr}"),
+        (false, true) => format!("stdout: {stdout}"),
+        (true, false) => format!("stderr: {stderr}"),
+        (true, true) => "no stdout/stderr output".to_string(),
+    }
+}
+
+fn parse_nvidia_smi_memory_total_bytes(output: &[u8]) -> Option<u64> {
+    let line = String::from_utf8_lossy(output).lines().next()?.trim().to_string();
+    let memory_mib = line.rsplit(',').next()?.trim().parse::<u64>().ok()?;
+    Some(memory_mib * 1024 * 1024)
 }
 
 fn missing_required_groth16_artifacts(artifact_dir: &Path) -> Vec<String> {
@@ -799,12 +913,18 @@ pub(crate) fn available_ram_bytes() -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use std::fs;
+    use std::path::Path;
     use std::sync::Mutex;
+
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
 
     use super::{
         available_memory_headroom_bytes, configure_prover_environment,
-        ensure_local_cpu_groth16_headroom, ensure_local_groth16_artifact_cache_ready,
-        meminfo_field_bytes, missing_required_groth16_artifacts, DEFAULT_GOMAXPROCS,
+        ensure_local_cpu_groth16_headroom, ensure_local_cuda_server_runtime_ready,
+        ensure_local_groth16_artifact_cache_ready, meminfo_field_bytes,
+        missing_required_groth16_artifacts, parse_nvidia_smi_memory_total_bytes,
+        DEFAULT_GOMAXPROCS,
         DEFAULT_LOCAL_SP1_SHARD_SIZE,
         DEFAULT_SP1_WORKER_CORE_BUFFER_SIZE, DEFAULT_SP1_WORKER_DEFERRED_BUFFER_SIZE,
         DEFAULT_SP1_WORKER_NUM_CORE_WORKERS, DEFAULT_SP1_WORKER_NUM_DEFERRED_WORKERS,
@@ -816,8 +936,10 @@ mod tests {
         DEFAULT_SP1_WORKER_RECURSION_EXECUTOR_BUFFER_SIZE,
         DEFAULT_SP1_WORKER_RECURSION_PROVER_BUFFER_SIZE, DEFAULT_SP1_WORKER_SETUP_BUFFER_SIZE,
         DEFAULT_SP1_WORKER_SPLICING_BUFFER_SIZE, DEFAULT_SP1_WORKER_USE_FIXED_PK,
-        DEFAULT_SP1_WORKER_VERIFY_INTERMEDIATES, MIN_FREE_RAM_FOR_GROTH16,
+        DEFAULT_SP1_WORKER_VERIFY_INTERMEDIATES, MIN_CUDA_GPU_MEMORY_BYTES,
+        MIN_FREE_RAM_FOR_GROTH16,
         REQUIRED_GROTH16_ARTIFACT_FILES, SP1_CIRCUIT_VERSION, SP1_CIRCUITS_DIR_OVERRIDE_ENV,
+        SP1_GPU_SERVER_PATH_OVERRIDE_ENV, ensure_local_cuda_gpu_memory_headroom,
     };
 
     static SP1_ENV_LOCK: Mutex<()> = Mutex::new(());
@@ -1010,6 +1132,102 @@ mod tests {
     }
 
     #[test]
+    fn parse_nvidia_smi_memory_total_bytes_reads_first_gpu_line() {
+        let output = b"0, 8188\n1, 24564\n";
+
+        assert_eq!(
+            parse_nvidia_smi_memory_total_bytes(output),
+            Some(8_188 * 1024 * 1024)
+        );
+    }
+
+    #[test]
+    fn ensure_local_cuda_gpu_memory_headroom_rejects_small_gpu() {
+        let total_memory_bytes = 8_188 * 1024 * 1024;
+
+        let error = ensure_local_cuda_gpu_memory_headroom(total_memory_bytes)
+            .expect_err("small GPU should be rejected");
+
+        assert!(
+            error
+                .to_string()
+                .contains("insufficient GPU memory for SP1 CUDA proving"),
+            "unexpected error: {error:#}"
+        );
+    }
+
+    #[test]
+    fn ensure_local_cuda_gpu_memory_headroom_accepts_supported_gpu() {
+        ensure_local_cuda_gpu_memory_headroom(MIN_CUDA_GPU_MEMORY_BYTES)
+            .expect("24 GiB GPU should pass");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ensure_local_cuda_server_runtime_ready_allows_missing_binary() {
+        let _guard = SP1_ENV_LOCK.lock().expect("SP1 env lock should not be poisoned");
+        let tempdir = tempfile::tempdir().expect("tempdir should create");
+        let previous_override = std::env::var_os(SP1_GPU_SERVER_PATH_OVERRIDE_ENV);
+        std::env::set_var(
+            SP1_GPU_SERVER_PATH_OVERRIDE_ENV,
+            tempdir.path().join("sp1-gpu-server"),
+        );
+
+        ensure_local_cuda_server_runtime_ready()
+            .expect("missing CUDA server binary should be allowed to bootstrap");
+
+        restore_os_env_var(SP1_GPU_SERVER_PATH_OVERRIDE_ENV, previous_override);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ensure_local_cuda_server_runtime_ready_accepts_working_binary() {
+        let _guard = SP1_ENV_LOCK.lock().expect("SP1 env lock should not be poisoned");
+        let tempdir = tempfile::tempdir().expect("tempdir should create");
+        let script_path = tempdir.path().join("sp1-gpu-server");
+        write_executable_script(&script_path, "#!/bin/sh\necho 6.0.2\nexit 0\n");
+
+        let previous_override = std::env::var_os(SP1_GPU_SERVER_PATH_OVERRIDE_ENV);
+        std::env::set_var(SP1_GPU_SERVER_PATH_OVERRIDE_ENV, &script_path);
+
+        ensure_local_cuda_server_runtime_ready()
+            .expect("working CUDA server binary should pass");
+
+        restore_os_env_var(SP1_GPU_SERVER_PATH_OVERRIDE_ENV, previous_override);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ensure_local_cuda_server_runtime_ready_reports_runtime_mismatch() {
+        let _guard = SP1_ENV_LOCK.lock().expect("SP1 env lock should not be poisoned");
+        let tempdir = tempfile::tempdir().expect("tempdir should create");
+        let script_path = tempdir.path().join("sp1-gpu-server");
+        write_executable_script(
+            &script_path,
+            "#!/bin/sh\necho 'error while loading shared libraries: libcudart.so.12: cannot open shared object file' >&2\nexit 127\n",
+        );
+
+        let previous_override = std::env::var_os(SP1_GPU_SERVER_PATH_OVERRIDE_ENV);
+        std::env::set_var(SP1_GPU_SERVER_PATH_OVERRIDE_ENV, &script_path);
+
+        let error = ensure_local_cuda_server_runtime_ready()
+            .expect_err("runtime-mismatched CUDA server should be rejected");
+
+        assert!(
+            error
+                .to_string()
+                .contains("The cached SP1 CUDA server is linked against CUDA 12"),
+            "unexpected error: {error:#}"
+        );
+        assert!(
+            error.to_string().contains("libcudart.so.12"),
+            "unexpected error: {error:#}"
+        );
+
+        restore_os_env_var(SP1_GPU_SERVER_PATH_OVERRIDE_ENV, previous_override);
+    }
+
+    #[test]
     fn missing_required_groth16_artifacts_reports_incomplete_cache() {
         let tempdir = tempfile::tempdir().expect("tempdir should create");
         fs::write(tempdir.path().join("groth16_circuit.bin"), [1_u8, 2, 3])
@@ -1096,6 +1314,24 @@ mod tests {
             std::env::set_var(SP1_CIRCUITS_DIR_OVERRIDE_ENV, value);
         } else {
             std::env::remove_var(SP1_CIRCUITS_DIR_OVERRIDE_ENV);
+        }
+    }
+
+    #[cfg(unix)]
+    fn write_executable_script(path: &Path, content: &str) {
+        fs::write(path, content).expect("script should write");
+        let mut permissions = fs::metadata(path)
+            .expect("script metadata should load")
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(path, permissions).expect("script should be executable");
+    }
+
+    fn restore_os_env_var(name: &str, value: Option<std::ffi::OsString>) {
+        if let Some(value) = value {
+            std::env::set_var(name, value);
+        } else {
+            std::env::remove_var(name);
         }
     }
 }

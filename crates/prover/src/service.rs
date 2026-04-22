@@ -1,4 +1,4 @@
-use std::{sync::Arc, time::Duration};
+use std::{sync::Arc, time::{Duration, Instant}};
 
 use anyhow::Context;
 use async_trait::async_trait;
@@ -117,9 +117,10 @@ pub struct Sp1JobProcessor;
 impl JobProcessor for Sp1JobProcessor {
     async fn process(&self, job: ProverJob) -> anyhow::Result<ProverResponse> {
         let computation = resolve_computation(&job.computation_id)?;
+        let request_id = job.request_id;
 
         debug!(
-            request_id = ?job.request_id,
+            request_id = ?request_id,
             computation = computation.name,
             elf_path = computation.elf_path,
             "processing prover job"
@@ -131,13 +132,37 @@ impl JobProcessor for Sp1JobProcessor {
         let computation_id = job.computation_id;
         let inputs = job.inputs.clone();
         let callback_accounts = job.callback_accounts.clone();
-        let (proof, result, public_inputs) =
-            tokio::task::spawn_blocking(move || prove_callback_payload(&computation_id, &inputs))
-                .await
-                .context("prover blocking task panicked")??;
+        let started_at = Instant::now();
+        let mut prove_task =
+            tokio::task::spawn_blocking(move || prove_callback_payload(&computation_id, &inputs));
+        let mut heartbeat = tokio::time::interval(Duration::from_secs(60));
+        heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        heartbeat.tick().await;
+
+        let (proof, result, public_inputs) = loop {
+            tokio::select! {
+                prove_result = &mut prove_task => {
+                    break prove_result.context("prover blocking task panicked")??;
+                }
+                _ = heartbeat.tick() => {
+                    info!(
+                        request_id = ?request_id,
+                        elapsed_secs = started_at.elapsed().as_secs(),
+                        "still generating prover response"
+                    );
+                }
+            }
+        };
+
+        info!(
+            request_id = ?request_id,
+            elapsed_secs = started_at.elapsed().as_secs(),
+            proof_bytes = proof.len(),
+            "finished generating prover response"
+        );
 
         Ok(ProverResponse {
-            request_id: job.request_id,
+            request_id,
             result,
             gas_used: proof.len() as u64,
             proof,

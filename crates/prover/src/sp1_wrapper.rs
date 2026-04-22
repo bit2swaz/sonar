@@ -628,6 +628,10 @@ fn ensure_local_cpu_groth16_headroom(
 
 fn ensure_local_groth16_artifact_cache_ready() -> anyhow::Result<()> {
     let artifact_dir = local_groth16_artifact_dir()?;
+    if !artifact_dir.exists() {
+        return Ok(());
+    }
+
     let missing = missing_required_groth16_artifacts(&artifact_dir);
     if missing.is_empty() {
         return Ok(());
@@ -1041,6 +1045,24 @@ mod tests {
             error.to_string().contains("artifacts.tar.gz"),
             "unexpected error: {error:#}"
         );
+
+        if let Some(value) = previous_override {
+            std::env::set_var(SP1_CIRCUITS_DIR_OVERRIDE_ENV, value);
+        } else {
+            std::env::remove_var(SP1_CIRCUITS_DIR_OVERRIDE_ENV);
+        }
+    }
+
+    #[test]
+    fn ensure_local_groth16_artifact_cache_ready_allows_missing_cache_dir() {
+        let _guard = SP1_ENV_LOCK.lock().expect("SP1 env lock should not be poisoned");
+        let tempdir = tempfile::tempdir().expect("tempdir should create");
+
+        let previous_override = std::env::var_os(SP1_CIRCUITS_DIR_OVERRIDE_ENV);
+        std::env::set_var(SP1_CIRCUITS_DIR_OVERRIDE_ENV, tempdir.path());
+
+        ensure_local_groth16_artifact_cache_ready()
+            .expect("missing cache dir should be allowed so SP1 can bootstrap it");
 
         if let Some(value) = previous_override {
             std::env::set_var(SP1_CIRCUITS_DIR_OVERRIDE_ENV, value);

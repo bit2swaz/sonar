@@ -46,11 +46,13 @@ const DEFAULT_SP1_WORKER_SPLICING_BUFFER_SIZE: &str = "1";
 const DEFAULT_SP1_WORKER_NUM_DEFERRED_WORKERS: &str = "1";
 const DEFAULT_SP1_WORKER_DEFERRED_BUFFER_SIZE: &str = "1";
 
-/// Minimum free RAM (bytes) required to attempt a real Groth16 proof locally.
-/// gnark needs to hold the R1CS (~1.5 GB), proving key (~2.5 GB), and MSM working
-/// memory (~0.5 GB with GOMAXPROCS=1) simultaneously → ~8 GB is a safe threshold.
-#[cfg(test)]
+/// Minimum effective local memory headroom (available RAM + free swap) required to attempt a
+/// real Groth16 proof on the local CPU prover. gnark needs to hold the R1CS (~1.5 GB), proving
+/// key (~2.5 GB), and MSM working memory (~0.5 GB with GOMAXPROCS=1) simultaneously, on top of
+/// the recursion steps before it. ~8 GiB is the minimum practical threshold.
 pub(crate) const MIN_FREE_RAM_FOR_GROTH16: u64 = 8 * 1024 * 1024 * 1024;
+
+const LOW_MEMORY_GROTH16_OVERRIDE_ENV: &str = "SONAR_ALLOW_LOW_MEMORY_GROTH16";
 
 type CachedBlockingProvingKey = <EnvProver as Prover>::ProvingKey;
 
@@ -560,8 +562,51 @@ fn decode_fibonacci_input(inputs: &[u8]) -> anyhow::Result<u32> {
 
 pub(crate) fn preflight_selected_prover_backend() -> anyhow::Result<()> {
     configure_prover_environment();
+
+    if using_local_cpu_prover() && !allow_low_memory_groth16_override() {
+        if let Some((mem_available, swap_free, headroom)) = available_memory_headroom_bytes() {
+            ensure_local_cpu_groth16_headroom(mem_available, swap_free, headroom)?;
+        }
+    }
+
     let _ = cached_blocking_prover()?;
     Ok(())
+}
+
+fn using_local_cpu_prover() -> bool {
+    std::env::var("SP1_PROVER")
+        .map(|value| value.eq_ignore_ascii_case("cpu"))
+        .unwrap_or(false)
+}
+
+fn allow_low_memory_groth16_override() -> bool {
+    std::env::var(LOW_MEMORY_GROTH16_OVERRIDE_ENV)
+        .map(|value| {
+            matches!(
+                value.to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+        .unwrap_or(false)
+}
+
+fn ensure_local_cpu_groth16_headroom(
+    mem_available: u64,
+    swap_free: u64,
+    headroom: u64,
+) -> anyhow::Result<()> {
+    if headroom >= MIN_FREE_RAM_FOR_GROTH16 {
+        return Ok(());
+    }
+
+    Err(anyhow!(
+        "insufficient local memory headroom for SP1 Groth16 CPU proving: {:.1} GiB available RAM + {:.1} GiB free swap = {:.1} GiB, need at least {:.1} GiB. Re-enable swap or set {}=1 to override this preflight",
+        bytes_to_gib(mem_available),
+        bytes_to_gib(swap_free),
+        bytes_to_gib(headroom),
+        bytes_to_gib(MIN_FREE_RAM_FOR_GROTH16),
+        LOW_MEMORY_GROTH16_OVERRIDE_ENV,
+    ))
 }
 
 fn cached_blocking_prover() -> anyhow::Result<CachedBlockingProver> {
@@ -647,19 +692,38 @@ fn serialize_proof(proof: &SP1ProofWithPublicValues) -> anyhow::Result<Vec<u8>> 
     bincode::serialize(proof).context("failed to serialize SP1 proof")
 }
 
+fn bytes_to_gib(bytes: u64) -> f64 {
+    bytes as f64 / (1024.0 * 1024.0 * 1024.0)
+}
+
+fn meminfo_field_bytes(content: &str, field: &str) -> Option<u64> {
+    for line in content.lines() {
+        if let Some(rest) = line.strip_prefix(field) {
+            let kb: u64 = rest.split_whitespace().next()?.parse().ok()?;
+            return Some(kb * 1024);
+        }
+    }
+
+    None
+}
+
+fn available_memory_headroom_bytes() -> Option<(u64, u64, u64)> {
+    let content = std::fs::read_to_string("/proc/meminfo").ok()?;
+    let mem_available = meminfo_field_bytes(&content, "MemAvailable:")?;
+    let swap_free = meminfo_field_bytes(&content, "SwapFree:").unwrap_or(0);
+    Some((
+        mem_available,
+        swap_free,
+        mem_available.saturating_add(swap_free),
+    ))
+}
+
 /// Returns the number of bytes of available (free + reclaimable) RAM on Linux by reading
 /// `MemAvailable` from `/proc/meminfo`.  Returns `None` on non-Linux platforms or on parse
 /// failure.
 #[cfg(test)]
 pub(crate) fn available_ram_bytes() -> Option<u64> {
-    let content = std::fs::read_to_string("/proc/meminfo").ok()?;
-    for line in content.lines() {
-        if let Some(rest) = line.strip_prefix("MemAvailable:") {
-            let kb: u64 = rest.split_whitespace().next()?.parse().ok()?;
-            return Some(kb * 1024);
-        }
-    }
-    None
+    available_memory_headroom_bytes().map(|(mem_available, _, _)| mem_available)
 }
 
 #[cfg(test)]
@@ -667,7 +731,9 @@ mod tests {
     use std::sync::Mutex;
 
     use super::{
-        configure_prover_environment, DEFAULT_GOMAXPROCS, DEFAULT_LOCAL_SP1_SHARD_SIZE,
+        available_memory_headroom_bytes, configure_prover_environment,
+        ensure_local_cpu_groth16_headroom, meminfo_field_bytes, DEFAULT_GOMAXPROCS,
+        DEFAULT_LOCAL_SP1_SHARD_SIZE,
         DEFAULT_SP1_WORKER_CORE_BUFFER_SIZE, DEFAULT_SP1_WORKER_DEFERRED_BUFFER_SIZE,
         DEFAULT_SP1_WORKER_NUM_CORE_WORKERS, DEFAULT_SP1_WORKER_NUM_DEFERRED_WORKERS,
         DEFAULT_SP1_WORKER_NUM_PREPARE_REDUCE_WORKERS,
@@ -678,7 +744,7 @@ mod tests {
         DEFAULT_SP1_WORKER_RECURSION_EXECUTOR_BUFFER_SIZE,
         DEFAULT_SP1_WORKER_RECURSION_PROVER_BUFFER_SIZE, DEFAULT_SP1_WORKER_SETUP_BUFFER_SIZE,
         DEFAULT_SP1_WORKER_SPLICING_BUFFER_SIZE, DEFAULT_SP1_WORKER_USE_FIXED_PK,
-        DEFAULT_SP1_WORKER_VERIFY_INTERMEDIATES,
+        DEFAULT_SP1_WORKER_VERIFY_INTERMEDIATES, MIN_FREE_RAM_FOR_GROTH16,
     };
 
     static SP1_ENV_LOCK: Mutex<()> = Mutex::new(());
@@ -825,6 +891,48 @@ mod tests {
             std::env::set_var(name, value);
         } else {
             std::env::remove_var(name);
+        }
+    }
+
+    #[test]
+    fn meminfo_field_bytes_parses_kib_values() {
+        let content = "MemAvailable:    1048576 kB\nSwapFree:        2097152 kB\n";
+
+        assert_eq!(meminfo_field_bytes(content, "MemAvailable:"), Some(1_073_741_824));
+        assert_eq!(meminfo_field_bytes(content, "SwapFree:"), Some(2_147_483_648));
+        assert_eq!(meminfo_field_bytes(content, "Missing:"), None);
+    }
+
+    #[test]
+    fn local_cpu_groth16_headroom_rejects_low_memory_without_swap() {
+        let mem_available = 5 * 1024 * 1024 * 1024;
+        let swap_free = 0;
+        let error = ensure_local_cpu_groth16_headroom(mem_available, swap_free, mem_available)
+            .expect_err("low headroom should be rejected");
+
+        assert!(
+            error
+                .to_string()
+                .contains("insufficient local memory headroom for SP1 Groth16 CPU proving"),
+            "unexpected error: {error:#}"
+        );
+    }
+
+    #[test]
+    fn local_cpu_groth16_headroom_allows_swap_backed_runs() {
+        let mem_available = 5 * 1024 * 1024 * 1024;
+        let swap_free = 4 * 1024 * 1024 * 1024;
+        let headroom = mem_available + swap_free;
+
+        assert!(headroom >= MIN_FREE_RAM_FOR_GROTH16);
+        ensure_local_cpu_groth16_headroom(mem_available, swap_free, headroom)
+            .expect("swap-backed headroom should pass");
+    }
+
+    #[test]
+    fn available_memory_headroom_reports_mem_available_at_minimum() {
+        if let Some((mem_available, _swap_free, headroom)) = available_memory_headroom_bytes() {
+            assert!(headroom >= mem_available);
         }
     }
 }

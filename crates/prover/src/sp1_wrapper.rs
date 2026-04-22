@@ -1,6 +1,7 @@
 use std::{
     collections::HashMap,
     fs,
+    path::{Path, PathBuf},
     sync::{Arc, Mutex, OnceLock},
 };
 
@@ -8,7 +9,7 @@ use anyhow::{anyhow, Context};
 use serde::{Deserialize, Serialize};
 use sp1_sdk::{
     blocking::{Elf, EnvProver, ProveRequest, Prover, ProverClient, SP1Stdin},
-    ProofFromNetwork, ProvingKey, SP1ProofWithPublicValues,
+    ProofFromNetwork, ProvingKey, SP1ProofWithPublicValues, SP1_CIRCUIT_VERSION,
 };
 
 // A smaller shard size reduces peak RAM per core-prover shard.  250 000 rows × ~16 field
@@ -53,6 +54,12 @@ const DEFAULT_SP1_WORKER_DEFERRED_BUFFER_SIZE: &str = "1";
 pub(crate) const MIN_FREE_RAM_FOR_GROTH16: u64 = 8 * 1024 * 1024 * 1024;
 
 const LOW_MEMORY_GROTH16_OVERRIDE_ENV: &str = "SONAR_ALLOW_LOW_MEMORY_GROTH16";
+const SP1_CIRCUITS_DIR_OVERRIDE_ENV: &str = "SONAR_SP1_CIRCUITS_DIR";
+const REQUIRED_GROTH16_ARTIFACT_FILES: &[&str] = &[
+    "groth16_circuit.bin",
+    "groth16_pk.bin",
+    "groth16_vk.bin",
+];
 
 type CachedBlockingProvingKey = <EnvProver as Prover>::ProvingKey;
 
@@ -569,6 +576,10 @@ pub(crate) fn preflight_selected_prover_backend() -> anyhow::Result<()> {
         }
     }
 
+    if using_local_real_prover() {
+        ensure_local_groth16_artifact_cache_ready()?;
+    }
+
     let _ = cached_blocking_prover()?;
     Ok(())
 }
@@ -578,6 +589,12 @@ fn using_local_cpu_prover() -> bool {
         .map(|value| value.eq_ignore_ascii_case("cpu"))
         .unwrap_or(false)
 }
+
+    fn using_local_real_prover() -> bool {
+        std::env::var("SP1_PROVER")
+        .map(|value| matches!(value.to_ascii_lowercase().as_str(), "cpu" | "cuda"))
+        .unwrap_or(false)
+    }
 
 fn allow_low_memory_groth16_override() -> bool {
     std::env::var(LOW_MEMORY_GROTH16_OVERRIDE_ENV)
@@ -607,6 +624,55 @@ fn ensure_local_cpu_groth16_headroom(
         bytes_to_gib(MIN_FREE_RAM_FOR_GROTH16),
         LOW_MEMORY_GROTH16_OVERRIDE_ENV,
     ))
+}
+
+fn ensure_local_groth16_artifact_cache_ready() -> anyhow::Result<()> {
+    let artifact_dir = local_groth16_artifact_dir()?;
+    let missing = missing_required_groth16_artifacts(&artifact_dir);
+    if missing.is_empty() {
+        return Ok(());
+    }
+
+    let tarball = artifact_dir.join("artifacts.tar.gz");
+    let tarball_hint = if tarball.is_file() {
+        " Found artifacts.tar.gz, but the extracted Groth16 files are missing or incomplete."
+    } else {
+        ""
+    };
+
+    Err(anyhow!(
+        "SP1 Groth16 artifacts are not ready at {}: missing {}.{} Delete that directory so SP1 can re-download a complete cache before starting the prover.",
+        artifact_dir.display(),
+        missing.join(", "),
+        tarball_hint,
+    ))
+}
+
+fn local_groth16_artifact_dir() -> anyhow::Result<PathBuf> {
+    let circuits_root = if let Some(path) = std::env::var_os(SP1_CIRCUITS_DIR_OVERRIDE_ENV) {
+        PathBuf::from(path)
+    } else {
+        let home = std::env::var_os("HOME")
+            .ok_or_else(|| anyhow!("HOME is not set; cannot locate the SP1 circuits directory"))?;
+        PathBuf::from(home).join(".sp1").join("circuits")
+    };
+
+    Ok(circuits_root
+        .join("groth16")
+        .join(SP1_CIRCUIT_VERSION.to_string()))
+}
+
+fn missing_required_groth16_artifacts(artifact_dir: &Path) -> Vec<String> {
+    REQUIRED_GROTH16_ARTIFACT_FILES
+        .iter()
+        .filter_map(|name| {
+            let path = artifact_dir.join(name);
+            match fs::metadata(&path) {
+                Ok(metadata) if metadata.is_file() && metadata.len() > 0 => None,
+                _ => Some((*name).to_string()),
+            }
+        })
+        .collect()
 }
 
 fn cached_blocking_prover() -> anyhow::Result<CachedBlockingProver> {
@@ -728,11 +794,13 @@ pub(crate) fn available_ram_bytes() -> Option<u64> {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
     use std::sync::Mutex;
 
     use super::{
         available_memory_headroom_bytes, configure_prover_environment,
-        ensure_local_cpu_groth16_headroom, meminfo_field_bytes, DEFAULT_GOMAXPROCS,
+        ensure_local_cpu_groth16_headroom, ensure_local_groth16_artifact_cache_ready,
+        meminfo_field_bytes, missing_required_groth16_artifacts, DEFAULT_GOMAXPROCS,
         DEFAULT_LOCAL_SP1_SHARD_SIZE,
         DEFAULT_SP1_WORKER_CORE_BUFFER_SIZE, DEFAULT_SP1_WORKER_DEFERRED_BUFFER_SIZE,
         DEFAULT_SP1_WORKER_NUM_CORE_WORKERS, DEFAULT_SP1_WORKER_NUM_DEFERRED_WORKERS,
@@ -745,6 +813,7 @@ mod tests {
         DEFAULT_SP1_WORKER_RECURSION_PROVER_BUFFER_SIZE, DEFAULT_SP1_WORKER_SETUP_BUFFER_SIZE,
         DEFAULT_SP1_WORKER_SPLICING_BUFFER_SIZE, DEFAULT_SP1_WORKER_USE_FIXED_PK,
         DEFAULT_SP1_WORKER_VERIFY_INTERMEDIATES, MIN_FREE_RAM_FOR_GROTH16,
+        REQUIRED_GROTH16_ARTIFACT_FILES, SP1_CIRCUIT_VERSION, SP1_CIRCUITS_DIR_OVERRIDE_ENV,
     };
 
     static SP1_ENV_LOCK: Mutex<()> = Mutex::new(());
@@ -933,6 +1002,78 @@ mod tests {
     fn available_memory_headroom_reports_mem_available_at_minimum() {
         if let Some((mem_available, _swap_free, headroom)) = available_memory_headroom_bytes() {
             assert!(headroom >= mem_available);
+        }
+    }
+
+    #[test]
+    fn missing_required_groth16_artifacts_reports_incomplete_cache() {
+        let tempdir = tempfile::tempdir().expect("tempdir should create");
+        fs::write(tempdir.path().join("groth16_circuit.bin"), [1_u8, 2, 3])
+            .expect("circuit file should write");
+
+        let missing = missing_required_groth16_artifacts(tempdir.path());
+
+        assert_eq!(
+            missing,
+            vec!["groth16_pk.bin".to_string(), "groth16_vk.bin".to_string()]
+        );
+    }
+
+    #[test]
+    fn ensure_local_groth16_artifact_cache_ready_rejects_tarball_only_cache() {
+        let _guard = SP1_ENV_LOCK.lock().expect("SP1 env lock should not be poisoned");
+        let tempdir = tempfile::tempdir().expect("tempdir should create");
+        let artifact_dir = tempdir
+            .path()
+            .join("groth16")
+            .join(SP1_CIRCUIT_VERSION.to_string());
+        fs::create_dir_all(&artifact_dir).expect("artifact dir should create");
+        fs::write(artifact_dir.join("artifacts.tar.gz"), [1_u8, 2, 3])
+            .expect("tarball should write");
+
+        let previous_override = std::env::var_os(SP1_CIRCUITS_DIR_OVERRIDE_ENV);
+        std::env::set_var(SP1_CIRCUITS_DIR_OVERRIDE_ENV, tempdir.path());
+
+        let error = ensure_local_groth16_artifact_cache_ready()
+            .expect_err("tarball-only cache should be rejected");
+
+        assert!(
+            error.to_string().contains("artifacts.tar.gz"),
+            "unexpected error: {error:#}"
+        );
+
+        if let Some(value) = previous_override {
+            std::env::set_var(SP1_CIRCUITS_DIR_OVERRIDE_ENV, value);
+        } else {
+            std::env::remove_var(SP1_CIRCUITS_DIR_OVERRIDE_ENV);
+        }
+    }
+
+    #[test]
+    fn ensure_local_groth16_artifact_cache_ready_accepts_extracted_files() {
+        let _guard = SP1_ENV_LOCK.lock().expect("SP1 env lock should not be poisoned");
+        let tempdir = tempfile::tempdir().expect("tempdir should create");
+        let artifact_dir = tempdir
+            .path()
+            .join("groth16")
+            .join(SP1_CIRCUIT_VERSION.to_string());
+        fs::create_dir_all(&artifact_dir).expect("artifact dir should create");
+
+        for file_name in REQUIRED_GROTH16_ARTIFACT_FILES {
+            fs::write(artifact_dir.join(file_name), [9_u8, 8, 7, 6])
+                .expect("artifact file should write");
+        }
+
+        let previous_override = std::env::var_os(SP1_CIRCUITS_DIR_OVERRIDE_ENV);
+        std::env::set_var(SP1_CIRCUITS_DIR_OVERRIDE_ENV, tempdir.path());
+
+        ensure_local_groth16_artifact_cache_ready()
+            .expect("complete extracted cache should pass");
+
+        if let Some(value) = previous_override {
+            std::env::set_var(SP1_CIRCUITS_DIR_OVERRIDE_ENV, value);
+        } else {
+            std::env::remove_var(SP1_CIRCUITS_DIR_OVERRIDE_ENV);
         }
     }
 }

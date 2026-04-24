@@ -1,5 +1,7 @@
 # Sonar
 
+> **Paused: Pending hardware funding for GPU proving.**
+
 Sonar is a Solana-native ZK coprocessor prototype built around an Anchor program, an off-chain proving pipeline, and a thin developer surface for submitting requests and registering verifiers. The repo now contains a full request -> prove -> callback -> index loop, a real CPI SDK, a developer CLI for verifier registration, Criterion benchmarks for hot paths, a repeatable devnet deployment script, and a baseline observability stack for the production-oriented Compose topology.
 
 Sonar is not production-ready yet. The current state is best described as a hardened devnet-quality system with one end-to-end vertical slice (`historical_avg`) and the core primitives needed to expand toward a multi-computation coprocessor.
